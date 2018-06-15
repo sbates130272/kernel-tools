@@ -1,0 +1,14 @@
+Stephen's Kernel Tools
+----------------------
+
+This repo contains a few scripts I find useful for kernel hacking.
+
+Installation
+------------
+
+I normally have a top-level folder called kernel which I place this
+repo into. I then have a number of sub-folders:
+
+linux-<arch> - the linux tree, copies for each ARCH I am working on.
+configs - a folder for all the configs I use, I don't repo this.
+debs - a folder of handy output .debs. Again I don't repo this.
