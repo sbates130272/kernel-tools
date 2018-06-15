@@ -1,0 +1,94 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, Eideticom 2018
+#
+# A simple script to build linux kernel image, header and source
+# Debian packages (.deb) for a specific kernel and configuration and
+# for the same ARCH as the host machine.
+#
+# Note that by default this will be a stable kernel with default
+# config options for the ARCH of the host machine.
+#
+# An example call to this script that builds a working p2pmem kernel
+# (only on AMD or x86_64) is as follows:
+#
+# REMOTE=https://github.com/sbates130272/linux-p2pmem \
+#   REMOTE_BRANCH=pci-p2p-v4 \
+#   CONFIG=build-kernel-deb-p2pconfig \  
+#   ./build-kernel-deb
+#
+# N.B. Aspects of this script might not work on very old or new
+# kernels. Seems to to work fine on kernels in the 4.x range.
+
+set -e
+
+WORKDIR=${WORKDIR:-.build-kernel-deb-work}
+REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
+REMOTE_BRANCH=${REMOTE_BRANCH:-v4.14.49}
+CONFIG=${CONFIG:-}
+THREADS=${THREADS:-8}
+MONO=${MONO:-no}
+CURDIR=$(pwd)
+
+function cleanup() {
+    rm -rf ../linux-${1}*.tar.gz \
+       ../linux-headers-${1}*.deb \
+       ../linux-libc-dev_${1}*.deb \
+       ../linux-image-${1}*.deb \
+       ../linux-${1}*.dsc \
+       ../linux-${1}*.changes
+}
+
+  # Perform a shallow (depth 1) clone of the target kernel repo into
+  # the work folder. Best to use a temp folder for this.
+
+git clone --depth 1 $REMOTE -b $REMOTE_BRANCH $WORKDIR
+cd $WORKDIR
+
+  # If requested copy in the specified .config to use as a start
+  # point. If none is specified then we just run a make defconfig.
+
+if [ ! -z $CONFIG ]; then
+    cp $CURDIR/$CONFIG .config
+    make olddefconfig
+else
+    make defconfig
+fi
+
+  # If a monolithic kernel (i.e. no modules, all built in) is
+  # requested then run make localyesconfig. Note this results in a
+  # much bigger image file but no need for modules.
+
+if [ $MONO == "yes" ]; then
+    make localyesconfig
+fi
+
+  # Now build the kernel and construct the debian packages.
+
+make -j $THREADS deb-pkg
+
+  # By default (and this seems hard to change) the deb-pkg make target
+  # generates the files in parent folder. We grab the kernel version
+  # number to assist in collecting these files into one tarball. We
+  # add the .config for reference as well as the remote, branch and
+  # commit SHA used.
+
+VERSION=$(make -s kernelversion)
+TIME=$(date +"%m%d%Y-%H%M%S")
+cat > .build-info << EOF
+  remote: ${REMOTE}
+  branch: ${REMOTE_BRANCH}
+  commit: $(git rev-parse HEAD)
+EOF
+
+tar cvfz ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
+    ../linux-headers-${VERSION}*.deb \
+    ../linux-image-${VERSION}*.deb \
+    .config \
+    .build-info
+
+  # Cleanup
+
+cleanup ${VERSION}
+rm -rf ${WORKDIR}
+cd $CURDIR

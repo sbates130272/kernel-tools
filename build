@@ -1,0 +1,30 @@
+#!/bin/bash
+# A simple script to build a .deb file for a linux image. Call this
+# script inside the top-folder of the linux source tree. Ensure you
+# have a .config in that folder. After running this script you still
+# need to install the kernal using dkpg -i. NB you should run this
+# script as root or fakeroot (preferably the later). You probably also
+# want to run
+#
+# fakeroot make-kpkg clean
+#
+# beforehand to cleanup the tree if you have built in it before. Also
+# note that for some reason you might also need to run
+#
+# sudo depmod
+#
+# and reboot to get modules to load as expected.
+
+CLASS=p2pmem-ppc
+VERSION=$(git describe)
+
+  # You can skip the append-to-version if you set certain things in
+  # the .config:
+  #   CONFIG_LOCALVERSION adds the a provided string
+  #   CONFIG_LOCALVERSION_AUTO adds the git tag.
+  #   One can also add a file in the toplevel folder called
+  #   localversion and that string will be appended too.
+
+#--cross-compile powerpc64le-linux-gnu- --arch ppc64el
+make-kpkg  --arch powerpc --subarch ppc64el --rootcmd fakeroot --initrd --append-to-version +${CLASS}-${VERSION} \
+          kernel_image kernel_headers

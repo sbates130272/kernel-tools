@@ -1,0 +1,12 @@
+#!/bin/bash
+
+  # Blue whale
+
+cp Image-06142018-121154 /boot/vmlinuz-4.14.30-eideticom+
+cp .config-06142018-163427 /boot/config-4.14.30-eideticom+
+cp modules-06142018-170050.tar.gz /lib/modules
+tar xvfz modules-06142018-170050.tar.gz
+update-initramfs -c -k 4.14.30-eideticom+
+sudo update-grub
+
+  # Stingray
