@@ -32,6 +32,7 @@ CURDIR=$(pwd)
 
 function cleanup() {
     rm -rf ../linux-${1}*.tar.gz \
+       ../linux-${1}*.diff.gz \
        ../linux-headers-${1}*.deb \
        ../linux-libc-dev_${1}*.deb \
        ../linux-image-${1}*.deb \
