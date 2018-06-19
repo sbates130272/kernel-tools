@@ -17,6 +17,11 @@
 #   CONFIG=build-kernel-deb-p2pconfig \  
 #   ./build-kernel-deb
 #
+# You can build a monolithic kernel by calling with MONO=yes. You can
+# patch the kernel prior to build by calling with
+# PATCH=<patch-file>. The patchfile is applied via cat <patch-file> |
+# patch -p1.
+#
 # N.B. Aspects of this script might not work on very old or new
 # kernels. Seems to to work fine on kernels in the 4.x range.
 
@@ -26,8 +31,10 @@ WORKDIR=${WORKDIR:-.build-kernel-deb-work}
 REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 REMOTE_BRANCH=${REMOTE_BRANCH:-v4.14.49}
 CONFIG=${CONFIG:-}
+PATCH=${PATHCH:-}
 THREADS=${THREADS:-8}
 MONO=${MONO:-no}
+
 CURDIR=$(pwd)
 
 function cleanup() {
@@ -64,6 +71,13 @@ if [ $MONO == "yes" ]; then
     make localyesconfig
 fi
 
+  # Apply a patch file if one exists.
+
+if [ ! -z $PATCH ]; then
+    cat $PATCH | patch -p1
+fi
+
+
   # Now build the kernel and construct the debian packages.
 
 make -j $THREADS deb-pkg
@@ -86,10 +100,11 @@ tar cvfz ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
     ../linux-headers-${VERSION}*.deb \
     ../linux-image-${VERSION}*.deb \
     .config \
+    $PATCH \
     .build-info
 
   # Cleanup
 
 cleanup ${VERSION}
-rm -rf ${WORKDIR}
 cd $CURDIR
+rm -rf ${WORKDIR}

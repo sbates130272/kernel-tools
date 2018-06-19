@@ -12,3 +12,32 @@ repo into. I then have a number of sub-folders:
 linux-<arch> - the linux tree, copies for each ARCH I am working on.
 configs - a folder for all the configs I use, I don't repo this.
 debs - a folder of handy output .debs. Again I don't repo this.
+
+build-kernel-deb
+----------------
+
+build-kernel-deb is a shell script that builds kernel debian package
+files for installation of linux kernel. See the notes in the file for
+more information. Note that cross-compilation is not yet supported in
+this script.
+
+An example run of this script that would build a p2pdma enabled kernel
+based on version 4 of the patchsets would be:
+
+REMOTE=https://github.com/sbates130272/linux-p2pmem \
+  REMOTE_BRANCH=pci-p2p-v4 \
+  CONFIG=<config-file> \
+  ./build-kernel-deb
+
+And an example that builds a monolithic kernel based on the default
+config (with all modules converted to "yes") for v4.14.30 would be:
+
+REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
+  REMOTE_BRANCH=v4.14.30 \
+  CONFIG=<config-file> \
+  ./build-kernel-deb
+
+Note all files associated with the unique generation of this kernel
+(the .config and the <path-file> (if present) are included in the
+output tarball along with a .build-info file that contains the
+information needed to reproduce the .debs.
