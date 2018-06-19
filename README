@@ -18,8 +18,7 @@ build-kernel-deb
 
 build-kernel-deb is a shell script that builds kernel debian package
 files for installation of linux kernel. See the notes in the file for
-more information. Note that cross-compilation is not yet supported in
-this script.
+more information.
 
 An example run of this script that would build a p2pdma enabled kernel
 based on version 4 of the patchsets would be:
@@ -34,7 +33,17 @@ config (with all modules converted to "yes") for v4.14.30 would be:
 
 REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
   REMOTE_BRANCH=v4.14.30 \
-  CONFIG=<config-file> \
+  MONO=yes \
+  ./build-kernel-deb
+
+And an example that builds a non-monolithic kernel based on the default
+config (with all modules converted to "yes") for v4.14.30 for arm64 on
+a non-arm64 host system would be:
+
+REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
+  REMOTE_BRANCH=v4.14.30 \
+  ARCH=arm64 \
+  CROSS_COMPILE=aarch64-linux-gnu- \
   ./build-kernel-deb
 
 Note all files associated with the unique generation of this kernel

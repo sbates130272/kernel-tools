@@ -7,7 +7,8 @@
 # for the same ARCH as the host machine.
 #
 # Note that by default this will be a stable kernel with default
-# config options for the ARCH of the host machine.
+# config options for the ARCH of the host machine. To build for
+# another ARCH set the ARCH and CROSS_COMPILE inputs appropriately. 
 #
 # An example call to this script that builds a working p2pmem kernel
 # (only on AMD or x86_64) is as follows:
@@ -34,8 +35,17 @@ CONFIG=${CONFIG:-}
 PATCH=${PATHCH:-}
 THREADS=${THREADS:-8}
 MONO=${MONO:-no}
+ARCH=${ARCH:-}
+CROSS_COMPILE=${CROSS_COMPILE:-}
 
 CURDIR=$(pwd)
+
+# If requested, setup for a cross compile
+
+if [ ! -z $ARCH ]; then
+    export ARCH=${ARCH}
+    export CROSS_COMPILE=${CROSS_COMPILE}
+fi;
 
 function cleanup() {
     rm -rf ../linux-${1}*.tar.gz \
