@@ -34,6 +34,7 @@ REMOTE_BRANCH=${REMOTE_BRANCH:-v4.14.49}
 CONFIG=${CONFIG:-}
 PATCH=${PATHCH:-}
 THREADS=${THREADS:-8}
+DEBUG=${DEBUG:-no}
 MONO=${MONO:-no}
 ARCH=${ARCH:-}
 CROSS_COMPILE=${CROSS_COMPILE:-}
@@ -71,6 +72,13 @@ if [ ! -z $CONFIG ]; then
     make olddefconfig
 else
     make defconfig
+fi
+
+  # By default, disable debug information since this increases the
+  # build time hugely.
+
+if [ $DEBUG != "yes" ]; then
+    scripts/config --disable DEBUG_INFO
 fi
 
   # If a monolithic kernel (i.e. no modules, all built in) is
