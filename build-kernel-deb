@@ -36,6 +36,7 @@ PATCH=${PATHCH:-}
 THREADS=${THREADS:-8}
 DEBUG=${DEBUG:-no}
 MONO=${MONO:-no}
+DISTCC=${DISTCC:-no}
 ARCH=${ARCH:-}
 CROSS_COMPILE=${CROSS_COMPILE:-}
 
@@ -95,10 +96,14 @@ if [ ! -z $PATCH ]; then
     cat $PATCH | patch -p1
 fi
 
+  # Now build the kernel and construct the debian packages. Use distcc
+  # if requested.
 
-  # Now build the kernel and construct the debian packages.
-
-make -j $THREADS deb-pkg
+if [ $DISTCC == "yes" ]; then
+    distcc-pump make -j $THREADS CC=distcc deb-pkg
+else
+    make -j $THREADS deb-pkg
+fi
 
   # By default (and this seems hard to change) the deb-pkg make target
   # generates the files in parent folder. We grab the kernel version
