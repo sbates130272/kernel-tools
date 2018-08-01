@@ -1,0 +1,28 @@
+#!/bin/bash
+# (c) Eideticom, 2018
+#
+# A simple script to build the Out-Of-Tree (OOT) bnxt* drivers for
+# BRCM RNICs. Point this script (using DIR) to the folder that
+# contains the bnxt_en and bnxt_re module source. Use KDIR to point to
+# your kernel folder.
+
+DIR=${DIR:-}
+KDIR=${KDIR:-/home/users/sbates/kernel/linux-arm64}
+
+THISDIR=$(PWD)
+
+cd $DIR/bnxt_en
+
+make CROSS_COMPILE=aarch64-linux-gnu- \
+     ARCH=arm64 \
+     LINUXSRC=${KDIR}
+
+cd ../bnxt_re
+
+make CROSS_COMPILE=aarch64-linux-gnu- \
+     ARCH=arm64 \
+     LINUXSRC=${KDIR} \
+     LINUX=${KDIR} \
+     OFA_KERNEL_PATH=${KDIR}
+
+cd $THISDIR
