@@ -1,0 +1,27 @@
+#!/bin/bash
+# (c) Eideticom, 2018
+#
+# A simple script that installs the bnxt_en and bnxt_re drivers into
+# an existing stingray kernel install. Use bnxt-oot-build to build
+# these drivers for the target kernel prior to calling this script.
+#
+# Run this script on the target system and point to the localtion of
+# the bnxt_en.ko and bnxt_re.ko files. Note that if the kernel changes
+# the location of these files in the module tree this script will
+# almost certainly break. Must be run as root (or a group with pretty
+# strong permissions).
+
+BNXT_EN=${BNXT_EN:-bnxt_en.ko}
+BNXT_RE=${BNXT_RE:-bnxt_re.ko}
+KERNEL=${KERNEL:-$(uname -r)}
+
+BNXT_EN_DIR=/lib/modules/${KERNEL}/kernel/drivers/net/ethernet/broadcom/bnxt
+BNXT_RE_DIR=/lib/modules/${KERNEL}/kernel/drivers/infiniband/hw/bnxt_re
+
+mkdir -p ${BNXT_EN_DIR}
+mkdir -p ${BNXT_RE_DIR}
+
+cp ${BNXT_EN} ${BNXT_EN_DIR}/bnxt_en.ko
+cp ${BNXT_RE} ${BNXT_RE_DIR}/bnxt_re.ko
+
+depmod

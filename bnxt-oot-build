@@ -5,33 +5,36 @@
 # BRCM RNICs. Point this script (using DIR) to the folder that
 # contains the bnxt_en and bnxt_re module source. Use KDIR to point to
 # your kernel folder.
+#
+# Note that this script picks up ARCH and CROSS_COMPILE from the
+# calling shell. So make sure you set these accordingly before calling
+# this script.
 
 DIR=${DIR:-./}
 KDIR=${KDIR:-/home/users/sbates/kernel/linux-arm64}
 CLEAN=${CLEAN:-yes}
+VERBOSE=${VERBOSE:-no}
 
 THISDIR=$(pwd)
 
+if [ $VERBOSE == "yes" ]; then
+    echo "ARCH=${ARCH}: CROSS_COMPILE={$CROSS_COMPILE}"
+    echo "KDIR=${KDIR}"
+    echo "DIR=${DIR}"
+fi
+
 cd $DIR/bnxt_en
 if [ $CLEAN == "yes" ];then
-    make CROSS_COMPILE=aarch64-linux-gnu- \
-	 ARCH=arm64 \
-	 clean
+    make clean
 fi
-make CROSS_COMPILE=aarch64-linux-gnu- \
-     ARCH=arm64 \
-     LINUXSRC=${KDIR}
+make LINUXSRC=${KDIR}
 cp bnxt_en.ko ${THISDIR}
 
 cd ../bnxt_re
 if [ $CLEAN == "yes" ];then
-    make CROSS_COMPILE=aarch64-linux-gnu- \
-	 ARCH=arm64 \
-	 clean
+    make clean
 fi
-make CROSS_COMPILE=aarch64-linux-gnu- \
-     ARCH=arm64 \
-     LINUXSRC=${KDIR} \
+make LINUXSRC=${KDIR} \
      LINUX=${KDIR} \
      OFA_KERNEL_PATH=${KDIR}
 cp bnxt_re.ko ${THISDIR}
