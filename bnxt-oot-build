@@ -6,23 +6,34 @@
 # contains the bnxt_en and bnxt_re module source. Use KDIR to point to
 # your kernel folder.
 
-DIR=${DIR:-}
+DIR=${DIR:-./}
 KDIR=${KDIR:-/home/users/sbates/kernel/linux-arm64}
+CLEAN=${CLEAN:-yes}
 
-THISDIR=$(PWD)
+THISDIR=$(pwd)
 
 cd $DIR/bnxt_en
-
+if [ $CLEAN == "yes" ];then
+    make CROSS_COMPILE=aarch64-linux-gnu- \
+	 ARCH=arm64 \
+	 clean
+fi
 make CROSS_COMPILE=aarch64-linux-gnu- \
      ARCH=arm64 \
      LINUXSRC=${KDIR}
+cp bnxt_en.ko ${THISDIR}
 
 cd ../bnxt_re
-
+if [ $CLEAN == "yes" ];then
+    make CROSS_COMPILE=aarch64-linux-gnu- \
+	 ARCH=arm64 \
+	 clean
+fi
 make CROSS_COMPILE=aarch64-linux-gnu- \
      ARCH=arm64 \
      LINUXSRC=${KDIR} \
      LINUX=${KDIR} \
      OFA_KERNEL_PATH=${KDIR}
+cp bnxt_re.ko ${THISDIR}
 
 cd $THISDIR
