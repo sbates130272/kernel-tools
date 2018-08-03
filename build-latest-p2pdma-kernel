@@ -1,0 +1,11 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, Eideticom 2018
+#
+# A helper script that I will try to keep up to date to build the
+# latest and greatest p2pdma kernel using known good .configs.
+
+REMOTE=https://github.com/sbates130272/linux-p2pmem \
+   REMOTE_BRANCH=pci-p2p-v4 \
+   CONFIG=config-x86_64-p2pdma \
+   ./build-kernel-deb

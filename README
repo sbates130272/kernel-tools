@@ -50,3 +50,11 @@ Note all files associated with the unique generation of this kernel
 (the .config and the <path-file> (if present) are included in the
 output tarball along with a .build-info file that contains the
 information needed to reproduce the .debs.
+
+build-latest-p2pdma-kernel
+--------------------------
+
+A little helper script around build-kernel-deb that should always
+point to the latest and greatest p2pdma kernel. Run this to generate a
+p2pdma kernel unless you know what you are doing and want to
+modify. Only support x86_64 right now.
