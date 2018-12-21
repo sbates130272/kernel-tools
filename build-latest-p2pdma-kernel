@@ -6,6 +6,6 @@
 # latest and greatest p2pdma kernel using known good .configs.
 
 REMOTE=https://github.com/sbates130272/linux-p2pmem \
-   REMOTE_BRANCH=pci-p2p-v10-plus \
+   REMOTE_BRANCH=pci-p2p-v4.20.x-plus \
    CONFIG=config-x86_64-p2pdma \
    ./build-kernel-deb
