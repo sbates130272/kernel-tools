@@ -13,12 +13,12 @@ linux-<arch> - the linux tree, copies for each ARCH I am working on.
 configs - a folder for all the configs I use, I don't repo this.
 debs - a folder of handy output .debs. Again I don't repo this.
 
-build-kernel-deb
-----------------
+build-kernel-debrpm
+-------------------
 
-build-kernel-deb is a shell script that builds kernel debian package
-files for installation of linux kernel. See the notes in the file for
-more information.
+build-kernel-debrpm is a shell script that builds kernel debian
+package or RHEL/CentOS RPM files for installation of linux kernel. See
+the notes in the file for more information.
 
 An example run of this script that would build a p2pdma enabled kernel
 based on version 4 of the patchsets would be:
@@ -26,7 +26,7 @@ based on version 4 of the patchsets would be:
 REMOTE=https://github.com/sbates130272/linux-p2pmem \
   REMOTE_BRANCH=pci-p2p-v4 \
   CONFIG=<config-file> \
-  ./build-kernel-deb
+  ./build-kernel-debrpm
 
 And an example that builds a monolithic kernel based on the default
 config (with all modules converted to "yes") for v4.14.30 would be:
@@ -34,7 +34,7 @@ config (with all modules converted to "yes") for v4.14.30 would be:
 REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
   REMOTE_BRANCH=v4.14.30 \
   MONO=yes \
-  ./build-kernel-deb
+  ./build-kernel-debrpm
 
 And an example that builds a non-monolithic kernel based on the default
 config (with all modules converted to "yes") for v4.14.30 for arm64 on
@@ -44,17 +44,17 @@ REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
   REMOTE_BRANCH=v4.14.30 \
   ARCH=arm64 \
   CROSS_COMPILE=aarch64-linux-gnu- \
-  ./build-kernel-deb
+  ./build-kernel-debrpm
 
 Note all files associated with the unique generation of this kernel
 (the .config and the <path-file> (if present) are included in the
 output tarball along with a .build-info file that contains the
-information needed to reproduce the .debs.
+information needed to reproduce the .debs or .rpms.
 
 build-latest-p2pdma-kernel
 --------------------------
 
-A little helper script around build-kernel-deb that should always
+A little helper script around build-kernel-debrpm that should always
 point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to
-modify. Only support x86_64 right now.
+modify. Only supports x86_64 right now.

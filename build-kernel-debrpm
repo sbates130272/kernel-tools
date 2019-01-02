@@ -3,8 +3,8 @@
 # (c) Stephen Bates, Eideticom 2018
 #
 # A simple script to build linux kernel image, header and source
-# Debian packages (.deb) for a specific kernel and configuration and
-# for the same ARCH as the host machine.
+# Debian packages (.deb) or RHEL/CentOS packages (.rpm) for a specific
+# kernel and configuration.
 #
 # Note that by default this will be a stable kernel with default
 # config options for the ARCH of the host machine. To build for
@@ -16,7 +16,7 @@
 # REMOTE=https://github.com/sbates130272/linux-p2pmem \
 #   REMOTE_BRANCH=pci-p2p-v4 \
 #   CONFIG=build-kernel-deb-p2pconfig \  
-#   ./build-kernel-deb
+#   ./build-kernel-debrpm
 #
 # You can build a monolithic kernel by calling with MONO=yes. You can
 # patch the kernel prior to build by calling with
@@ -28,7 +28,7 @@
 
 set -e
 
-WORKDIR=${WORKDIR:-.build-kernel-deb-work}
+WORKDIR=${WORKDIR:-.build-kernel-debrpm-work}
 REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 REMOTE_BRANCH=${REMOTE_BRANCH:-v4.14.49}
 CONFIG=${CONFIG:-}
@@ -39,6 +39,7 @@ MONO=${MONO:-no}
 DISTCC=${DISTCC:-no}
 ARCH=${ARCH:-}
 CROSS_COMPILE=${CROSS_COMPILE:-}
+DEB=${DEB:-yes}
 
 CURDIR=$(pwd)
 
@@ -96,20 +97,21 @@ if [ ! -z $PATCH ]; then
     cat $PATCH | patch -p1
 fi
 
-  # Now build the kernel and construct the debian packages. Use distcc
-  # if requested.
+  # Now build the kernel and construct the debian or RPM packages. Use
+  # distcc if requested. In the case of RPM pass in RPM opts to use
+  # the current folder as the parent for rpmbuild folder.
 
-if [ $DISTCC == "yes" ]; then
-    distcc-pump make -j $THREADS CC=distcc deb-pkg
+if [ $DEB == "yes" ]; then
+    TARGET=deb-pkg
 else
-    make -j $THREADS deb-pkg
+    TARGET=rpm-pkg
 fi
 
-  # By default (and this seems hard to change) the deb-pkg make target
-  # generates the files in parent folder. We grab the kernel version
-  # number to assist in collecting these files into one tarball. We
-  # add the .config for reference as well as the remote, branch and
-  # commit SHA used.
+if [ $DISTCC == "yes" ]; then
+    distcc-pump make -j $THREADS CC=distcc $TARGET
+else
+    make RPMOPTS="--define \"_topdir `pwd`/rpmbuild\"" -j $THREADS $TARGET
+fi
 
 VERSION=$(make -s kernelversion)
 TIME=$(date +"%m%d%Y-%H%M%S")
@@ -119,12 +121,35 @@ cat > .build-info << EOF
   commit: $(git rev-parse HEAD)
 EOF
 
-tar cvfz ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
-    ../linux-headers-${VERSION}*.deb \
-    ../linux-image-${VERSION}*.deb \
-    .config \
-    $PATCH \
-    .build-info
+if [ $DEB == "yes" ]; then
+
+    # By default (and this seems hard to change) the deb-pkg make target
+    # generates the files in parent folder. We grab the kernel version
+    # number to assist in collecting these files into one tarball. We
+    # add the .config for reference as well as the remote, branch and
+    # commit SHA used.
+
+    tar cvfz ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
+	../linux-headers-${VERSION}*.deb \
+	../linux-image-${VERSION}*.deb \
+	.config \
+	$PATCH \
+	.build-info
+
+else
+
+    if [ -z $ARCH ]; then
+	ARCH=$(lscpu | head -n 1 | awk '{print $2}')
+    fi
+
+    tar cvfz ${CURDIR}/build-kernel-rpm.${TIME}.tar.gz \
+	.config \
+	./rpmbuild/RPMS/${ARCH}/kernel-*.rpm \
+	$PATCH \
+	kernel.spec \
+	.build-info
+
+fi
 
   # Cleanup
 
