@@ -32,16 +32,24 @@ WORKDIR=${WORKDIR:-.build-kernel-debrpm-work}
 REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 REMOTE_BRANCH=${REMOTE_BRANCH:-v4.14.49}
 CONFIG=${CONFIG:-}
-PATCH=${PATHCH:-}
+PATCH=${PATCH:-}
 THREADS=${THREADS:-8}
 DEBUG=${DEBUG:-no}
 MONO=${MONO:-no}
 DISTCC=${DISTCC:-no}
+ICECC=${ICECC:-no}
 ARCH=${ARCH:-}
 CROSS_COMPILE=${CROSS_COMPILE:-}
 DEB=${DEB:-yes}
 
 CURDIR=$(pwd)
+
+# Can't do both DISTCC and ICECC!
+
+if [ $DISTCC == "yes" ] && [ $ICECC == "yes" ]; then
+    echo "You cannot set both DISTCC and ICECC!"
+    exit 1
+fi
 
 # If requested, setup for a cross compile
 
@@ -108,7 +116,9 @@ else
 fi
 
 if [ $DISTCC == "yes" ]; then
-    distcc-pump make -j $THREADS CC=distcc $TARGET
+    distcc-pump make RPMOPTS="--define \"_topdir `pwd`/rpmbuild\"" -j $THREADS CC=distcc $TARGET
+elif [ $ICECC == "yes" ]; then
+    make RPMOPTS="--define \"_topdir `pwd`/rpmbuild\"" -j $THREADS CC="icecc cc" $TARGET
 else
     make RPMOPTS="--define \"_topdir `pwd`/rpmbuild\"" -j $THREADS $TARGET
 fi
