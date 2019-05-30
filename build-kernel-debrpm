@@ -65,7 +65,8 @@ function cleanup() {
        ../linux-libc-dev_${1}*.deb \
        ../linux-image-${1}*.deb \
        ../linux-${1}*.dsc \
-       ../linux-${1}*.changes
+       ../linux-${1}*.changes \
+       ../linux-${1}*.buildinfo
 }
 
   # Perform a shallow (depth 1) clone of the target kernel repo into
@@ -73,6 +74,12 @@ function cleanup() {
 
 git clone --depth 1 $REMOTE -b $REMOTE_BRANCH $WORKDIR
 cd $WORKDIR
+
+  # Apply a patch file if one exists.
+
+if [ ! -z $PATCH ]; then
+    cat ../$PATCH | patch -p1
+fi
 
   # If requested copy in the specified .config to use as a start
   # point. If none is specified then we just run a make defconfig.
@@ -97,12 +104,6 @@ fi
 
 if [ $MONO == "yes" ]; then
     make localyesconfig
-fi
-
-  # Apply a patch file if one exists.
-
-if [ ! -z $PATCH ]; then
-    cat $PATCH | patch -p1
 fi
 
   # Now build the kernel and construct the debian or RPM packages. Use
@@ -143,7 +144,7 @@ if [ $DEB == "yes" ]; then
 	../linux-headers-${VERSION}*.deb \
 	../linux-image-${VERSION}*.deb \
 	.config \
-	$PATCH \
+	../$PATCH \
 	.build-info
 
 else

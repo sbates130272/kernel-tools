@@ -1,0 +1,697 @@
+From 54c393892caef20c78e687467d54f18f6a23bed3 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Wed, 25 Oct 2017 16:48:00 -0600
+Subject: [PATCH 1/2] pci: Add a acs_disable option for pci kernel parameter
+
+On some servers the BIOS sets up ACS on any valid pci_dev in the
+system. The kernel has no way of backing this out since the kernel
+only turns ACS capabilities on.
+
+This patch adds a new boot option to the pci kernel parameter called
+"acs_disable" that will disable ACS. This is useful for PCI peer to
+peer communication but can cause problems when IOVA isolation is
+required and an IOMMU is enabled. Use with care.
+
+Signed-off-by: Stephen Bates <sbates@raithlin.com>
+
+From 20209d809430f0e77badbe12a6099a65504137d9 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 18 Jun 2018 19:49:35 -0600
+Subject: [PATCH 2/2] p2pmem_pci.c: Add hacky device file for p2pdma
+
+Exposing p2pdma devices to userspace is a no-no for the offical
+upstream submission. However it is handy for out-of-tree testing. This
+commit adds a hacky driver that exposes /dev/p2pmemX char devices that
+can be used to expose p2pdma IO memory to user-space.
+
+Signed-off-by: Stephen Bates <sbates@raithlin.com>
+---
+ .../admin-guide/kernel-parameters.txt         |  4 ++++
+ drivers/pci/pci.c                             | 24 ++++++++++++++++---
+ drivers/pci/pci.h                             |  2 +-
+ drivers/pci/probe.c                           |  4 ++--
+ 4 files changed, 28 insertions(+), 6 deletions(-)
+ drivers/pci/Kconfig      |  10 +
+ drivers/pci/Makefile     |   1 +
+ drivers/pci/p2pmem_pci.c | 512 +++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 523 insertions(+)
+ create mode 100644 drivers/pci/p2pmem_pci.c
+
+diff --git a/Documentation/admin-guide/kernel-parameters.txt b/Documentation/admin-guide/kernel-parameters.txt
+index aefd358a5ca3..754277100d96 100644
+--- a/Documentation/admin-guide/kernel-parameters.txt
++++ b/Documentation/admin-guide/kernel-parameters.txt
+@@ -3160,6 +3160,10 @@
+ 		earlydump	dump PCI config space before the kernel
+ 				changes anything
+ 		off		[X86] don't probe for the PCI bus
++		acs_disable     [PCIE] disable access control services. Note
++				this can interfere with IOVA isolation if an IOMMU
++				is enabled but can be necessary when doing PCI
++				peer to peer communication. Use with care.
+ 		bios		[X86-32] force use of PCI BIOS, don't access
+ 				the hardware directly. Use this if your machine
+ 				has a non-standard PCI host bridge.
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index c9d8e3c837de..2c288e9c912d 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -124,6 +124,9 @@ bool pci_ats_disabled(void)
+ 	return pcie_ats_disabled;
+ }
+ 
++/* If set, the PCIe ACS capability will be disabled. */
++static bool pci_acs_disable;
++
+ /* Disable bridge_d3 for all PCIe ports */
+ static bool pci_bridge_d3_disable;
+ /* Force bridge_d3 for all PCIe ports */
+@@ -1407,7 +1410,7 @@ void pci_restore_state(struct pci_dev *dev)
+ 	pci_restore_msi_state(dev);
+ 
+ 	/* Restore ACS and IOV configuration state */
+-	pci_enable_acs(dev);
++	pci_config_acs(dev);
+ 	pci_restore_iov_state(dev);
+ 
+ 	dev->state_saved = false;
+@@ -3147,11 +3150,24 @@ static void pci_std_enable_acs(struct pci_dev *dev)
+ }
+ 
+ /**
+- * pci_enable_acs - enable ACS if hardware support it
++ * pci_config_acs - configure ACS
+  * @dev: the PCI device
+  */
+-void pci_enable_acs(struct pci_dev *dev)
++void pci_config_acs(struct pci_dev *dev)
+ {
++	int pos;
++
++	if (pci_acs_disable) {
++		pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ACS);
++		if (!pos)
++			return;
++
++		dev_warn_ratelimited(&dev->dev,
++				     "disabling ACS via pci_acs_disable\n");
++		pci_write_config_word(dev, pos + PCI_ACS_CTRL, 0);
++		return;
++	}
++
+ 	if (!pci_acs_enable)
+ 		goto disable_acs_redir;
+ 
+@@ -6154,6 +6170,8 @@ static int __init pci_setup(char *str)
+ 			} else if (!strncmp(str, "noats", 5)) {
+ 				pr_info("PCIe: ATS is disabled\n");
+ 				pcie_ats_disabled = true;
++			} else if (!strncmp(str, "acs_disable", 11)) {
++				pci_acs_disable = true;
+ 			} else if (!strcmp(str, "noaer")) {
+ 				pci_no_aer();
+ 			} else if (!strcmp(str, "earlydump")) {
+
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 662b7457db23..a9eb140f425b 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -465,7 +465,7 @@ static inline resource_size_t pci_resource_alignment(struct pci_dev *dev,
+ 	return resource_alignment(res);
+ }
+ 
+-void pci_enable_acs(struct pci_dev *dev);
++void pci_config_acs(struct pci_dev *dev);
+ #ifdef CONFIG_PCI_QUIRKS
+ int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags);
+ int pci_dev_specific_enable_acs(struct pci_dev *dev);
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index b1c05b5054a0..07356f42bd02 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -2342,8 +2342,8 @@ static void pci_init_capabilities(struct pci_dev *dev)
+ 	/* Address Translation Services */
+ 	pci_ats_init(dev);
+ 
+-	/* Enable ACS P2P upstream forwarding */
+-	pci_enable_acs(dev);
++	/* Configure ACS P2P upstream forwarding */
++	pci_config_acs(dev);
+ 
+ 	/* Precision Time Measurement */
+ 	pci_ptm_init(dev);
+diff --git a/drivers/pci/Kconfig b/drivers/pci/Kconfig
+index 2dcc30429e8b..cd7cef387244 100644
+--- a/drivers/pci/Kconfig
++++ b/drivers/pci/Kconfig
+@@ -152,6 +152,16 @@ config PCI_P2PDMA
+ 
+ 	  If unsure, say N.
+ 
++config PCI_P2PDMA_DEV
++	tristate "PCI peer-to-peer device"
++	depends on PCI_P2PDMA
++	help
++	  Create a device tree entry for each p2pmem device in the
++	  system. Note this is a very nasty hack and not part of the
++	  official kernel submission.
++
++	  If unsure, say N.
++
+ config PCI_LABEL
+ 	def_bool y if (DMI || ACPI)
+ 	depends on PCI
+diff --git a/drivers/pci/Makefile b/drivers/pci/Makefile
+index f2bda77a2df1..1199115b7192 100644
+--- a/drivers/pci/Makefile
++++ b/drivers/pci/Makefile
+@@ -28,6 +28,7 @@ obj-$(CONFIG_PCI_STUB)		+= pci-stub.o
+ obj-$(CONFIG_PCI_PF_STUB)	+= pci-pf-stub.o
+ obj-$(CONFIG_PCI_ECAM)		+= ecam.o
+ obj-$(CONFIG_PCI_P2PDMA)	+= p2pdma.o
++obj-$(CONFIG_PCI_P2PDMA_DEV)	+= p2pmem_pci.o
+ obj-$(CONFIG_XEN_PCIDEV_FRONTEND) += xen-pcifront.o
+ 
+ # Endpoint library must be initialized before its users
+diff --git a/drivers/pci/p2pmem_pci.c b/drivers/pci/p2pmem_pci.c
+new file mode 100644
+index 000000000000..ab02060380ee
+--- /dev/null
++++ b/drivers/pci/p2pmem_pci.c
+@@ -0,0 +1,512 @@
++/*
++ * P2PMEM PCI EP Device Driver
++ * Copyright (c) 2017, Eideticom
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * Copyright (C) 2017 Eideitcom
++ */
++
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/pci-p2pdma.h>
++#include <linux/fs.h>
++#include <linux/cdev.h>
++#include <linux/pfn_t.h>
++
++#define PCI_VENDOR_EIDETICOM 0x1de5
++#define PCI_VENDOR_MICROSEMI 0x11f8
++#define PCI_MTRAMON_DEV_ID   0xf117
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Stephen Bates <stephen@eideticom.com");
++MODULE_DESCRIPTION("A P2PMEM driver for simple PCIe End Points (EPs)");
++
++static int max_devices = 16;
++module_param(max_devices, int, 0444);
++MODULE_PARM_DESC(max_devices, "Maximum number of char devices");
++
++#define MTRAMON_BAR 4
++
++static struct class *p2pmem_class;
++static DEFINE_IDA(p2pmem_ida);
++static dev_t p2pmem_devt;
++
++static struct pci_device_id p2pmem_pci_id_table[] = {
++	{ PCI_DEVICE(PCI_VENDOR_EIDETICOM, 0x1000), .driver_data = 0 },
++	{ PCI_DEVICE(PCI_VENDOR_MICROSEMI,
++		     PCI_MTRAMON_DEV_ID), .driver_data = MTRAMON_BAR },
++	{ 0, }
++};
++MODULE_DEVICE_TABLE(pci, p2pmem_pci_id_table);
++
++struct p2pmem_dev {
++	struct device dev;
++	struct pci_dev *pdev;
++	int id;
++	struct cdev cdev;
++	bool created_by_hack;
++};
++
++static struct p2pmem_dev *to_p2pmem(struct device *dev)
++{
++	return container_of(dev, struct p2pmem_dev, dev);
++}
++
++struct p2pmem_vma {
++	struct p2pmem_dev *p2pmem_dev;
++	atomic_t mmap_count;
++	size_t nr_pages;
++
++	/* Protects the used_pages array */
++	struct mutex mutex;
++	struct page *used_pages[];
++};
++
++static void p2pmem_vma_open(struct vm_area_struct *vma)
++{
++	struct p2pmem_vma *pv = vma->vm_private_data;
++
++	atomic_inc(&pv->mmap_count);
++}
++
++static void p2pmem_vma_free_pages(struct vm_area_struct *vma)
++{
++	int i;
++	struct p2pmem_vma *pv = vma->vm_private_data;
++
++	mutex_lock(&pv->mutex);
++
++	for (i = 0; i < pv->nr_pages; i++) {
++		if (pv->used_pages[i]) {
++			pci_free_p2pmem(pv->p2pmem_dev->pdev,
++					page_to_virt(pv->used_pages[i]),
++					PAGE_SIZE);
++			pv->used_pages[i] = NULL;
++		}
++	}
++
++	mutex_unlock(&pv->mutex);
++}
++
++static void p2pmem_vma_close(struct vm_area_struct *vma)
++{
++	struct p2pmem_vma *pv = vma->vm_private_data;
++
++	if (!atomic_dec_and_test(&pv->mmap_count))
++		return;
++
++	p2pmem_vma_free_pages(vma);
++
++	dev_dbg(&pv->p2pmem_dev->dev, "vma close");
++	kfree(pv);
++}
++
++static vm_fault_t p2pmem_vma_fault(struct vm_fault *vmf)
++{
++	struct p2pmem_vma *pv = vmf->vma->vm_private_data;
++	unsigned int pg_idx;
++	struct page *pg;
++	pfn_t pfn;
++	vm_fault_t rc;
++
++	pg_idx = (vmf->address - vmf->vma->vm_start) / PAGE_SIZE;
++
++	mutex_lock(&pv->mutex);
++
++	if (pv->used_pages[pg_idx])
++		pg = pv->used_pages[pg_idx];
++	else
++		pg = virt_to_page(pci_alloc_p2pmem(pv->p2pmem_dev->pdev,
++						   PAGE_SIZE));
++
++	if (!pg) {
++		mutex_unlock(&pv->mutex);
++		return VM_FAULT_OOM;
++	}
++
++	pv->used_pages[pg_idx] = pg;
++
++	pfn = phys_to_pfn_t(page_to_phys(pg), PFN_DEV | PFN_MAP);
++	rc = vmf_insert_mixed(vmf->vma, vmf->address, pfn);
++
++	mutex_unlock(&pv->mutex);
++
++	return rc;
++}
++
++const struct vm_operations_struct p2pmem_vmops = {
++	.open = p2pmem_vma_open,
++	.close = p2pmem_vma_close,
++	.fault = p2pmem_vma_fault,
++};
++
++static int p2pmem_open(struct inode *inode, struct file *filp)
++{
++	struct p2pmem_dev *p;
++
++	p = container_of(inode->i_cdev, struct p2pmem_dev, cdev);
++	filp->private_data = p;
++
++	return 0;
++}
++
++static int p2pmem_mmap(struct file *filp, struct vm_area_struct *vma)
++{
++	struct p2pmem_dev *p = filp->private_data;
++	struct p2pmem_vma *pv;
++	size_t nr_pages = (vma->vm_end - vma->vm_start) / PAGE_SIZE;
++
++	if ((vma->vm_flags & VM_MAYSHARE) != VM_MAYSHARE) {
++		dev_warn(&p->dev, "mmap failed: can't create private mapping\n");
++		return -EINVAL;
++	}
++
++	dev_dbg(&p->dev, "Allocating mmap with %zd pages.\n", nr_pages);
++
++	pv = kzalloc(sizeof(*pv) + sizeof(pv->used_pages[0]) * nr_pages,
++		     GFP_KERNEL);
++	if (!pv)
++		return -ENOMEM;
++
++	mutex_init(&pv->mutex);
++	pv->nr_pages = nr_pages;
++	pv->p2pmem_dev = p;
++	atomic_set(&pv->mmap_count, 1);
++
++	vma->vm_private_data = pv;
++	vma->vm_ops = &p2pmem_vmops;
++	vma->vm_flags |= VM_MIXEDMAP;
++
++	return 0;
++}
++
++static const struct file_operations p2pmem_fops = {
++	.owner = THIS_MODULE,
++	.open = p2pmem_open,
++	.mmap = p2pmem_mmap,
++};
++
++static int p2pmem_test_page_mappings(struct p2pmem_dev *p)
++{
++	void *addr;
++	int err = 0;
++	struct page *page;
++	struct pci_bus_region bus_region;
++	struct resource res;
++	phys_addr_t pa;
++
++	addr = pci_alloc_p2pmem(p->pdev, PAGE_SIZE);
++	if (!addr)
++		return -ENOMEM;
++
++	page = virt_to_page(addr);
++	if (!is_zone_device_page(page)) {
++		dev_err(&p->dev,
++			"ERROR: kernel virt_to_page does not point to a ZONE_DEVICE page!");
++		err = -EFAULT;
++		goto out;
++	}
++
++	bus_region.start = pci_p2pmem_virt_to_bus(p->pdev, addr);
++	bus_region.end = bus_region.start + PAGE_SIZE;
++
++	pcibios_bus_to_resource(p->pdev->bus, &res, &bus_region);
++
++	pa = page_to_phys(page);
++	if (pa != res.start) {
++		dev_err(&p->dev,
++			"ERROR: page_to_phys does not map to the BAR address!"
++			"  %pa[p] != %pa[p]", &pa, &res.start);
++		err = -EFAULT;
++		goto out;
++	}
++
++	pa = virt_to_phys(addr);
++	if (pa != res.start) {
++		dev_err(&p->dev,
++			"ERROR: virt_to_phys does not map to the BAR address!"
++			"  %pa[p] != %pa[p]", &pa, &res.start);
++		err = -EFAULT;
++		goto out;
++	}
++
++	if (page_to_virt(page) != addr) {
++		dev_err(&p->dev,
++			"ERROR: page_to_virt does not map to the correct address!");
++		err = -EFAULT;
++		goto out;
++	}
++
++out:
++	if (err == 0)
++		dev_info(&p->dev, "kernel page mappings seem sane.");
++
++	pci_free_p2pmem(p->pdev, addr, PAGE_SIZE);
++	return err;
++}
++
++static int p2pmem_test_p2p_access(struct p2pmem_dev *p)
++{
++	u32 *addr;
++	const u32 test_value = 0x11223344;
++	int err = 0;
++
++	addr = pci_alloc_p2pmem(p->pdev, PAGE_SIZE);
++	if (!addr)
++		return -ENOMEM;
++
++	WRITE_ONCE(addr[0], 0);
++	if (READ_ONCE(addr[0]) != 0) {
++		err = -EFAULT;
++		goto out;
++	}
++
++	WRITE_ONCE(addr[0], test_value);
++	if (READ_ONCE(addr[0]) != test_value) {
++		err = -EFAULT;
++		goto out;
++	}
++
++out:
++	if (err == 0)
++		dev_info(&p->dev, "kernel can access p2p memory.");
++	else
++		dev_err(&p->dev, "ERROR: kernel can't access p2p memory!");
++
++	pci_free_p2pmem(p->pdev, addr, PAGE_SIZE);
++	return err;
++}
++
++static int p2pmem_test(struct p2pmem_dev *p)
++{
++	int err;
++
++	err = p2pmem_test_page_mappings(p);
++	if (err)
++		return err;
++
++	return p2pmem_test_p2p_access(p);
++}
++
++static void p2pmem_release(struct device *dev)
++{
++	struct p2pmem_dev *p = to_p2pmem(dev);
++
++	kfree(p);
++}
++
++static struct p2pmem_dev *p2pmem_create(struct pci_dev *pdev)
++{
++	struct p2pmem_dev *p;
++	int err;
++
++	p = kzalloc(sizeof(*p), GFP_KERNEL);
++	if (!p)
++		return ERR_PTR(-ENOMEM);
++
++	p->pdev = pdev;
++
++	device_initialize(&p->dev);
++	p->dev.class = p2pmem_class;
++	p->dev.parent = &pdev->dev;
++	p->dev.release = p2pmem_release;
++
++	p->id = ida_simple_get(&p2pmem_ida, 0, 0, GFP_KERNEL);
++	if (p->id < 0) {
++		err = p->id;
++		goto out_free;
++	}
++
++	dev_set_name(&p->dev, "p2pmem%d", p->id);
++	p->dev.devt = MKDEV(MAJOR(p2pmem_devt), p->id);
++
++	cdev_init(&p->cdev, &p2pmem_fops);
++	p->cdev.owner = THIS_MODULE;
++
++	err = cdev_device_add(&p->cdev, &p->dev);
++	if (err)
++		goto out_ida;
++
++	dev_info(&p->dev, "registered");
++
++	p2pmem_test(p);
++
++	return p;
++
++out_ida:
++	ida_simple_remove(&p2pmem_ida, p->id);
++out_free:
++	kfree(p);
++	return ERR_PTR(err);
++}
++
++void p2pmem_destroy(struct p2pmem_dev *p)
++{
++	dev_info(&p->dev, "unregistered");
++	cdev_device_del(&p->cdev, &p->dev);
++	ida_simple_remove(&p2pmem_ida, p->id);
++	put_device(&p->dev);
++}
++
++static int p2pmem_pci_probe(struct pci_dev *pdev,
++			    const struct pci_device_id *id)
++{
++	struct p2pmem_dev *p;
++	int err = 0;
++
++	if (pci_enable_device_mem(pdev) < 0) {
++		dev_err(&pdev->dev, "unable to enable device!\n");
++		goto out;
++	}
++
++	err = pci_p2pdma_add_resource(pdev, id->driver_data, 0, 0);
++	if (err) {
++		dev_err(&pdev->dev, "unable to add p2p resource");
++		goto out_disable_device;
++	}
++
++	pci_p2pmem_publish(pdev, true);
++
++	p = p2pmem_create(pdev);
++	if (IS_ERR(p))
++		goto out_disable_device;
++
++	pci_set_drvdata(pdev, p);
++
++	return 0;
++
++out_disable_device:
++	pci_disable_device(pdev);
++out:
++	return err;
++}
++
++static void p2pmem_pci_remove(struct pci_dev *pdev)
++{
++	struct p2pmem_dev *p = pci_get_drvdata(pdev);
++
++	p2pmem_destroy(p);
++}
++
++static struct pci_driver p2pmem_pci_driver = {
++	.name = "p2pmem_pci",
++	.id_table = p2pmem_pci_id_table,
++	.probe = p2pmem_pci_probe,
++	.remove = p2pmem_pci_remove,
++};
++
++static void ugly_mtramon_hack_init(void)
++{
++	struct pci_dev *pdev = NULL;
++	struct p2pmem_dev *p;
++	int err;
++
++	while ((pdev = pci_get_device(PCI_VENDOR_MICROSEMI,
++				      PCI_MTRAMON_DEV_ID,
++				      pdev))) {
++		// If there's no driver it can be handled by the regular
++		//  pci driver case
++		if (!pdev->driver)
++			continue;
++
++		// The NVME driver already handled it
++		if (pdev->p2pdma)
++			continue;
++
++		if (!pdev->p2pdma) {
++			err = pci_p2pdma_add_resource(pdev, MTRAMON_BAR, 0, 0);
++			if (err) {
++				dev_err(&pdev->dev,
++					"unable to add p2p resource");
++				continue;
++			}
++		}
++
++		p = p2pmem_create(pdev);
++		if (!p)
++			continue;
++
++		p->created_by_hack = true;
++	}
++}
++
++static void ugly_hack_to_create_p2pmem_devs_for_other_devices(void)
++{
++	struct pci_dev *pdev = NULL;
++	struct p2pmem_dev *p;
++
++	while ((pdev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pdev))) {
++		if (!pdev->p2pdma)
++			continue;
++
++		p = p2pmem_create(pdev);
++		if (!p)
++			continue;
++
++		p->created_by_hack = true;
++	}
++}
++
++static void ugly_hack_deinit(void)
++{
++	struct class_dev_iter iter;
++	struct device *dev;
++	struct p2pmem_dev *p;
++
++	class_dev_iter_init(&iter, p2pmem_class, NULL, NULL);
++	while ((dev = class_dev_iter_next(&iter))) {
++		p = to_p2pmem(dev);
++		if (p->created_by_hack)
++			p2pmem_destroy(p);
++	}
++	class_dev_iter_exit(&iter);
++}
++
++static int __init p2pmem_pci_init(void)
++{
++	int rc;
++
++	p2pmem_class = class_create(THIS_MODULE, "p2pmem_device");
++	if (IS_ERR(p2pmem_class))
++		return PTR_ERR(p2pmem_class);
++
++	rc = alloc_chrdev_region(&p2pmem_devt, 0, max_devices, "p2pmem");
++	if (rc)
++		goto err_class;
++
++	ugly_hack_to_create_p2pmem_devs_for_other_devices();
++	ugly_mtramon_hack_init();
++
++	rc = pci_register_driver(&p2pmem_pci_driver);
++	if (rc)
++		goto err_chdev;
++
++	pr_info(KBUILD_MODNAME ": module loaded\n");
++
++	return 0;
++err_chdev:
++	unregister_chrdev_region(p2pmem_devt, max_devices);
++err_class:
++	class_destroy(p2pmem_class);
++	return rc;
++}
++
++static void __exit p2pmem_pci_cleanup(void)
++{
++	pci_unregister_driver(&p2pmem_pci_driver);
++	ugly_hack_deinit();
++	unregister_chrdev_region(p2pmem_devt, max_devices);
++	class_destroy(p2pmem_class);
++	pr_info(KBUILD_MODNAME ": module unloaded\n");
++}
++
++module_init(p2pmem_pci_init);
++module_exit(p2pmem_pci_cleanup);
+-- 
+2.17.1
+
+
