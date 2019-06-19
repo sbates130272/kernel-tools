@@ -144,7 +144,6 @@ if [ $DEB == "yes" ]; then
 	../linux-headers-${VERSION}*.deb \
 	../linux-image-${VERSION}*.deb \
 	.config \
-	../$PATCH \
 	.build-info
 
 else
@@ -156,10 +155,14 @@ else
     tar cvfz ${CURDIR}/build-kernel-rpm.${TIME}.tar.gz \
 	.config \
 	./rpmbuild/RPMS/${ARCH}/kernel-*.rpm \
-	$PATCH \
 	kernel.spec \
 	.build-info
 
+fi
+
+if [ ! -z $PATCH ]; then
+    tar rvfz  ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
+	../$PATCH
 fi
 
   # Cleanup
