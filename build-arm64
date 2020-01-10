@@ -95,6 +95,31 @@ tar cvfz headers.tar.gz ${HEADERDIR}
 cp headers.tar.gz ${OUTPUTDIR}-${TIME}/headers-$TIME.tar.gz
 rm -rf ${MODULEDIR} ${HEADERDIR}
 
+# Ideally we will add the ability to install the kernel we just built
+# on the arm64 machine. For now here are some instructions for the
+# BRCM stingray card we have.
+#
+# 1. Mount the partition with the kernel images:
+#      mount /dev/mmcblk0p1 /mnt/mmcblk0p1
+#
+# 2. Move the new Image file over:
+#      mv /mnt/mmcblk0p1/Image /mnt/mmcblk0p1/Image.last
+#      mv <image name> /mnt/mmcblk0p1/Image
+#      umount /mnt/mmcblk0p1/
+#
+# 3. Install the modules:
+#      cd /lib/modules
+#      cp <tarball of modules> .
+#      tar xvfz <tarball of modules>
+#
+# 4. Install the headers (only needed if compiling kernel modules):
+#      cd /usr/src
+#      cp <tarball of headers> .
+#      tar xvfz <tarball of headers>
+#      cd /lib/modules/<name of new kernel>
+#      ln -s build /usr/src/<name of new kernel>
+#      ln -s source /usr/src/<name of new kernel>
+
 if [ $TARGET_HOST != "none" ]; then
     echo "TBD: scp kernel and modules to target host!"
 fi
