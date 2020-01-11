@@ -72,13 +72,13 @@ function cleanup() {
   # Perform a shallow (depth 1) clone of the target kernel repo into
   # the work folder. Best to use a temp folder for this.
 
-git clone --depth 1 $REMOTE -b $REMOTE_BRANCH $WORKDIR
-cd $WORKDIR
+git clone --depth 1 $REMOTE -b $REMOTE_BRANCH $WORKDIR/kernel
+cd $WORKDIR/kernel
 
   # Apply a patch file if one exists.
 
 if [ ! -z $PATCH ]; then
-    cat ../$PATCH | patch -p1
+    cat $CURDIR/$PATCH | patch -p1
 fi
 
   # If requested copy in the specified .config to use as a start
@@ -132,6 +132,11 @@ cat > .build-info << EOF
   commit: $(git rev-parse HEAD)
 EOF
 
+    FILES=(.config .build-info)
+    if [ ! -z $PATCH ]; then
+	FILES+=(${CURDIR}/$PATCH)
+    fi
+
 if [ $DEB == "yes" ]; then
 
     # By default (and this seems hard to change) the deb-pkg make target
@@ -140,11 +145,11 @@ if [ $DEB == "yes" ]; then
     # add the .config for reference as well as the remote, branch and
     # commit SHA used.
 
+
     tar cvfz ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
 	../linux-headers-${VERSION}*.deb \
 	../linux-image-${VERSION}*.deb \
-	.config \
-	.build-info
+	${FILES[*]}
 
 else
 
@@ -153,16 +158,10 @@ else
     fi
 
     tar cvfz ${CURDIR}/build-kernel-rpm.${TIME}.tar.gz \
-	.config \
 	./rpmbuild/RPMS/${ARCH}/kernel-*.rpm \
 	kernel.spec \
-	.build-info
+	${FILES[*]}
 
-fi
-
-if [ ! -z $PATCH ]; then
-    tar rvfz  ${CURDIR}/build-kernel-deb.${TIME}.tar.gz \
-	../$PATCH
 fi
 
   # Cleanup

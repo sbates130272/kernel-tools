@@ -6,7 +6,8 @@
 # latest and greatest p2pdma kernel using known good .configs.
 
 REMOTE=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-   REMOTE_BRANCH=v5.1.5 \
+   WORKDIR=.build-kernel-debrpm-work \
+   REMOTE_BRANCH=v5.4.10 \
    CONFIG=config-x86_64-p2pdma \
    PATCH=0001-p2pdma-patches.patch \
    ./build-kernel-debrpm
