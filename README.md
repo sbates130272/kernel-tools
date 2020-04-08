@@ -12,9 +12,9 @@ directories for each architecture I am working on (e.g. arm64, riscv,
 x86 etc).
 
 + **```configs```**: A folder for all the configs I use, I usually
-don't repo this. 
+don't repo this.
 
-+ **```debs```**: Afolder of handy output .debs (I almost always work
++ **```debs```**: A folder of handy output .debs (I almost always work
 on Debian packages and not RPMs). Again I don't repo this.
 
 ## build-kernel-debrpm
@@ -60,5 +60,17 @@ A helper script around ```build-kernel-debrpm``` that should always
 point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to use
 build-kernel-debrpm. Only supports x86_64 right now.
+
+## arm-tools
+
+The ```arm-tools``` sub-folder contains a few useful tools for
+building Linux kernels and kernel modules for ARM64 based
+systems. This includes some platform-specific tools and some generic
+ISA tools.
+
+One of the most useful of these tools is the ```build-arm64``` script
+which can build a ARM64 kernel and modules using a cross-compiler
+approach. You should call this script from the top-level of a kernel
+source tree. See the header of the script for more information.
 
 [1]: https://www.kernel.org/
