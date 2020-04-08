@@ -61,6 +61,27 @@ point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to use
 build-kernel-debrpm. Only supports x86_64 right now.
 
+## docker
+
+A Dockerfile exists that can generate the enviromnent needed to run
+```build-latest-p2pdma-kernel```. This can make the generation of the
+.deb for this kernel simpler for some users. To generate the kernel
+Debian packages this way proceed as follows from the top-level folder
+of this repo.
+```
+cd docker
+docker build -t kernel-tools:latest .
+```
+once the image has run to completion you can obtain the tarball via
+the following (from either the docker folder or the top-level folder
+for this repo).
+```
+docker create --name kernel-tools kernel-tools:latest
+docker cp kernel-tools:/kernel/build-kernel-deb.docker.tar.gz .
+```
+You can then install the .deb using the same approach as a native
+build using build-latest-p2pdma-kernel.
+
 ## arm-tools
 
 The ```arm-tools``` sub-folder contains a few useful tools for
