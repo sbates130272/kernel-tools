@@ -61,6 +61,29 @@ point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to use
 build-kernel-debrpm. Only supports x86_64 right now.
 
+### Patches
+
+```build-latest-p2pdma-kernel``` uses three patches (located in the
+patches folder) to address some issues with p2pdma kernels. Namely:
+
++ **acs_disable**: Add a kernel configuration parameter
+(```acs_disable```) that turns off [PCIe ACS][2] everywhere. This can
+be useful for testing p2pdma. To enable this mode add
+```pci=acs_disable``` to your kernel command line parameters.
+
++ **p2pmem-pci**: Adds a device driver for p2pmem exposed by a device
+driver. Based on [this repository][3]. We use this to expose p2pmem to
+userspace applications.
+
++ **p2pdma patches**: A couple of changes were made in ```p2pdma.c```
+in the v5.4 kernel that broke out of tree drivers for p2pmem. These
+patches fix this. They are not needed for pre-v5.4 kernels.
+
+**Note that the current version of the ```patches``` sub-folder this
+repository only supports v5.6.x series kernel source due to changes in
+```drivers/pci/probe.c```. You will need to generate your own patches
+to address other kernels. We plan to address this issue soon!**
+
 ## docker
 
 A Dockerfile exists that can generate the enviromnent needed to run
@@ -95,3 +118,5 @@ approach. You should call this script from the top-level of a kernel
 source tree. See the header of the script for more information.
 
 [1]: https://www.kernel.org/
+[2]: http://www.intel.com/content/www/us/en/pci-express/pci-sig-sr-iov-primer-sr-iov-technology-paper.html
+[3]: https://github.com/Eideticom/p2pmem-pci

@@ -1,0 +1,74 @@
+From a3ab8ce1cb4c380b5f7ff92904c7c1318ff8df13 Mon Sep 17 00:00:00 2001
+From: Armen Baloyan <abaloyan@gigaio.com>
+Date: Fri, 6 Dec 2019 03:58:22 -0800
+Subject: [PATCH] PCI/P2PDMA: Attempt to set provider map_type if not set.
+
+If provider map type is not set pci_p2pdma_mag_sg_attrs() would attempt
+to set before dumping kernel warning.
+This will be used by NVme over NTB target driver that maps the NT
+BAR as P2P memory - when a request is submitted to an NVMe drive for
+the first time the map type for the NT PCi device is not set - mapping
+function would attempt to set the amp type and if successful, will
+continue with the operation.
+
+Signed-off-by: Armen Baloyan <abaloyan@gigaio.com>
+---
+ drivers/pci/p2pdma.c | 20 ++++++++++++++------
+ 1 file changed, 14 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/pci/p2pdma.c b/drivers/pci/p2pdma.c
+index f824e19d986c..6d6c64415087 100644
+--- a/drivers/pci/p2pdma.c
++++ b/drivers/pci/p2pdma.c
+@@ -247,6 +247,7 @@ int pci_p2pdma_add_resource(struct pci_dev *pdev, int bar, size_t size,
+ 
+ out_pool_destroy:
+ 	gen_pool_destroy(pdev->p2pdma->pool);
++	pdev->p2pdma->pool = NULL;
+ out_unmap:
+ 	devm_memunmap_pages(&pdev->dev, pgmap);
+ 	devm_kfree(&pdev->dev, pgmap);
+@@ -838,15 +839,24 @@ void pci_p2pmem_publish(struct pci_dev *pdev, bool publish)
+ EXPORT_SYMBOL_GPL(pci_p2pmem_publish);
+ 
+ static enum pci_p2pdma_map_type pci_p2pdma_map_type(struct pci_dev *provider,
+-						    struct pci_dev *client)
++		struct pci_dev *client)
+ {
++	enum pci_p2pdma_map_type ret;
++
+ 	if (!provider->p2pdma)
+ 		return PCI_P2PDMA_MAP_NOT_SUPPORTED;
+ 
+-	return xa_to_value(xa_load(&provider->p2pdma->map_types,
+-				   map_types_idx(client)));
+-}
++	ret = xa_to_value(xa_load(&provider->p2pdma->map_types,
++			map_types_idx(client)));
++	if (ret != PCI_P2PDMA_MAP_UNKNOWN)
++		return ret;
+ 
++	/*
++	 * Lazily resolve the map type and update the xarray if there
++	 * is a mapping:
++	 */
++	return upstream_bridge_distance_warn(provider, client, NULL);
++}
+ static int __pci_p2pdma_map_sg(struct pci_p2pdma_pagemap *p2p_pgmap,
+ 		struct device *dev, struct scatterlist *sg, int nents)
+ {
+@@ -898,14 +908,12 @@ int pci_p2pdma_map_sg_attrs(struct device *dev, struct scatterlist *sg,
+ 		return 0;
+ 
+ 	client = to_pci_dev(dev);
+-
+ 	switch (pci_p2pdma_map_type(p2p_pgmap->provider, client)) {
+ 	case PCI_P2PDMA_MAP_THRU_HOST_BRIDGE:
+ 		return dma_map_sg_attrs(dev, sg, nents, dir, attrs);
+ 	case PCI_P2PDMA_MAP_BUS_ADDR:
+ 		return __pci_p2pdma_map_sg(p2p_pgmap, dev, sg, nents);
+ 	default:
+-		WARN_ON_ONCE(1);
+ 		return 0;
+ 	}
+ }
