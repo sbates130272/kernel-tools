@@ -29,7 +29,7 @@ Signed-off-by: Stephen Bates <sbates@raithlin.com>
  .../admin-guide/kernel-parameters.txt         |  4 ++++
  drivers/pci/pci.c                             | 24 ++++++++++++++++---
  drivers/pci/pci.h                             |  2 +-
- drivers/pci/probe.c                           |  4 ++--
+ drivers/pci/probe.c                           |  2 +-
  4 files changed, 28 insertions(+), 6 deletions(-)
  drivers/pci/Kconfig      |  10 +
  drivers/pci/Makefile     |   1 +
@@ -126,20 +126,12 @@ index 662b7457db23..a9eb140f425b 100644
  int pci_dev_specific_acs_enabled(struct pci_dev *dev, u16 acs_flags);
  int pci_dev_specific_enable_acs(struct pci_dev *dev);
 diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
-index b1c05b5054a0..07356f42bd02 100644
+index 512cb4312..ad89d7d36 100644
 --- a/drivers/pci/probe.c
 +++ b/drivers/pci/probe.c
-@@ -2342,8 +2342,8 @@ static void pci_init_capabilities(struct pci_dev *dev)
- 	/* Address Translation Services */
- 	pci_ats_init(dev);
- 
--	/* Enable ACS P2P upstream forwarding */
--	pci_enable_acs(dev);
-+	/* Configure ACS P2P upstream forwarding */
-+	pci_config_acs(dev);
- 
- 	/* Precision Time Measurement */
- 	pci_ptm_init(dev);
+@@ -2329,1 +2329,1 @@ static void pci_init_capabilities(struct pci_dev *dev)
+-	pci_enable_acs(dev);		/* Enable ACS P2P upstream forwarding */
++	pci_config_acs(dev);            /* Configure ACS P2P upstream forwarding*/
 diff --git a/drivers/pci/Kconfig b/drivers/pci/Kconfig
 index 2dcc30429e8b..cd7cef387244 100644
 --- a/drivers/pci/Kconfig

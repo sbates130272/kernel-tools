@@ -3,6 +3,7 @@ ol
 lt
 ul
 
+ACS
 CentOS
 CLI
 CMAKE
@@ -21,6 +22,7 @@ RHEL
 RPMs
 
 aarch
+acs
 api
 aG
 cd
@@ -44,6 +46,7 @@ github
 gz
 href
 html
+http
 https
 jupp
 kbuild
@@ -51,6 +54,8 @@ ko
 libnoload
 linux
 linuxfoundation
+intel
+iov
 mkdir
 mmap
 mmapping
@@ -64,6 +69,7 @@ pdf
 pdma
 pmem
 pmemX
+pre
 prometheus
 refspecs
 repo
@@ -73,6 +79,8 @@ riscv
 rpms
 sbates
 scm
+sig
+sr
 standlone
 sudo
 symvers
