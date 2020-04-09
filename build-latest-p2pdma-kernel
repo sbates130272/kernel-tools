@@ -5,10 +5,14 @@
 # A helper script that I will try to keep up to date to build the
 # latest and greatest p2pdma kernel using known good .configs.
 
+CONFIG=${CONFIG:-./p2pdma-configs/config-x86_64-p2pdma}
+REMOTE_BRANCH=${REMOTE_BRANCH:-v5.6.3}
+
+export CONFIG
+export REMOTE_BRANCH
+
 REMOTE=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-   REMOTE_BRANCH=v5.6.3 \
-   CONFIG=config-x86_64-p2pdma \
-   PATCH=patches \
-   ICECC=no \
-   THREADS=128 \
-   ./build-kernel-debrpm
+  PATCH=patches \
+  ICECC=no \
+  THREADS=128 \
+  ./build-kernel-debrpm

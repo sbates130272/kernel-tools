@@ -11,8 +11,12 @@ repo into. I then have a number of sub-folders:
 directories for each architecture I am working on (e.g. arm64, riscv,
 x86 etc).
 
-+ **```configs```**: A folder for all the configs I use, I usually
-don't repo this.
++ **```p2pdma-configs```**: A folder for some good p2pdma configs. For
+example this includes a really small (but valid) config, a QEMU
+specific config and an Ubuntu 18.04 like config.
+
++ **```configs```**: A folder for all the other configs I use, I usually
+don't repo this or tie it to a separate private repo.
 
 + **```debs```**: A folder of handy output .debs (I almost always work
 on Debian packages and not RPMs). Again I don't repo this.
