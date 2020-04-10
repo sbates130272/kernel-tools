@@ -80,7 +80,7 @@ cd $WORKDIR/kernel
   # all the *.patch files in that folder.
 
 function patchdir() {
-    for file in $(find $1 -name "*.patch") ; do
+    for file in $(find $1 -name "*.patch" | sort -n) ; do
 	echo Applying patch-file $file.
 	cat $file | patch -p1 -l
     done
