@@ -6,7 +6,8 @@
 #
 # Once this container build runs to completion you can use the docker
 # copy command (docker cp) to copy the .deb files to the host and use
-# dpkg -i to do the package install on your system.
+# dpkg -i to do the package install on your system. See the top-level
+# README.md for more information.
 
   # Change this to your preferred distro.
 FROM ubuntu:18.04
@@ -29,5 +30,5 @@ RUN apt-get update && apt-get install -y \
  
 RUN git clone https://github.com/sbates130272/kernel-tools.git kernel
 WORKDIR kernel
-RUN THREADS=8 ./build-latest-p2pdma-kernel
+RUN ./build-latest-p2pdma-kernel
 RUN cp build-kernel-deb.*.tar.gz build-kernel-deb.docker.tar.gz
