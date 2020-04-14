@@ -7,12 +7,13 @@
 
 CONFIG=${CONFIG:-./p2pdma-configs/config-x86_64-p2pdma}
 REMOTE_BRANCH=${REMOTE_BRANCH:-v5.6.3}
+REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 
 export CONFIG
 export REMOTE_BRANCH
+export REMOTE
 
-REMOTE=git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-  PATCH=patches \
+PATCH=patches \
   ICECC=no \
   THREADS=128 \
   ./build-kernel-debrpm
