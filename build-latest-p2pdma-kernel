@@ -6,7 +6,7 @@
 # latest and greatest p2pdma kernel using known good .configs.
 
 CONFIG=${CONFIG:-./p2pdma-configs/config-x86_64-p2pdma}
-REMOTE_BRANCH=${REMOTE_BRANCH:-v5.6.3}
+REMOTE_BRANCH=${REMOTE_BRANCH:-v5.6.14}
 REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 
 export CONFIG
