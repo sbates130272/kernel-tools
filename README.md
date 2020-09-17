@@ -112,17 +112,19 @@ docker rm kernel-tools
 You can then install the .deb using the same approach as a native
 build using build-latest-p2pdma-kernel.
 
-## arm-tools
+## arch-tools
 
-The ```arm-tools``` sub-folder contains a few useful tools for
-building Linux kernels and kernel modules for ARM64 based
+The ```arch-tools``` sub-folder contains a few useful tools for
+building Linux kernels and kernel modules for non-amd64 based
 systems. This includes some platform-specific tools and some generic
 ISA tools.
 
 One of the most useful of these tools is the ```build-arm64``` script
 which can build a ARM64 kernel and modules using a cross-compiler
 approach. You should call this script from the top-level of a kernel
-source tree. See the header of the script for more information.
+source tree. See the header of the script for more information. There
+is also a ```build-riscv``` script which can do something similar for
+riscv32 and riscv64 ISA.
 
 [1]: https://www.kernel.org/
 [2]: http://www.intel.com/content/www/us/en/pci-express/pci-sig-sr-iov-primer-sr-iov-technology-paper.html

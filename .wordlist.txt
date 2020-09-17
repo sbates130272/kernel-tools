@@ -4,6 +4,7 @@ lt
 ul
 
 ACS
+amd
 CentOS
 CLI
 CMAKE
