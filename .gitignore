@@ -3,3 +3,5 @@ linux-*/
 configs/
 debs/
 output-arm64-*
+*.gz
+*.dsc
