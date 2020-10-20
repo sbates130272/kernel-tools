@@ -13,7 +13,7 @@ export CONFIG
 export REMOTE_BRANCH
 export REMOTE
 
-PATCH=patches \
+PATCH=patches/v5.6 \
   ICECC=no \
   THREADS=128 \
   ./build-kernel-debrpm
