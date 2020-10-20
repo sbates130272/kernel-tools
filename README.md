@@ -83,10 +83,11 @@ userspace applications.
 in the v5.4 kernel that broke out of tree drivers for p2pmem. These
 patches fix this. They are not needed for pre-v5.4 kernels.
 
-**Note that the current version of the ```patches``` sub-folder this
-repository only supports v5.6.x series kernel source due to changes in
-```drivers/pci/probe.c```. You will need to generate your own patches
-to address other kernels. We plan to address this issue soon!**
+**Note that due to changes on the upstream kernel, we maintain multiple
+versions of the patches. When choosing a patch set, please use the one tagged
+with the highest version that is lower than the target kernel version (for
+example, if compiling a 5.8 kernel and there are patches for 5.6 and 5.9, use
+the 5.6 set).**
 
 ## docker
 
