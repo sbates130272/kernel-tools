@@ -6,14 +6,14 @@
 # latest and greatest p2pdma kernel using known good .configs.
 
 CONFIG=${CONFIG:-./p2pdma-configs/config-x86_64-p2pdma}
-REMOTE_BRANCH=${REMOTE_BRANCH:-v5.8.14}
+REMOTE_BRANCH=${REMOTE_BRANCH:-v5.9.1}
 REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git}
 
 export CONFIG
 export REMOTE_BRANCH
 export REMOTE
 
-PATCH=patches/v5.6 \
+PATCH=patches/v5.9 \
   ICECC=no \
   THREADS=128 \
   ./build-kernel-debrpm
