@@ -1,0 +1,101 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, Raithlin Consulting 2017
+# (c) Stephen Bates, Raithlin Consulting 2020
+#
+# A simple script to build a linux kernel and associated modules for
+# RISCV-based systems.
+#
+# Notes from Logan
+# ----------------
+# export ARM64
+# export CROSS_COMPILE=/home/batesste/stingray/poky/build/tmp/sysroots/\
+#	x86_64-linux/usr/bin/aarch64-poky-linux/aarch64-poky-linux-
+# make -j 16
+# make INSTALL_MOD_PATH=./myroot modules_install
+#
+#
+# Then it's a mater of scping the stuff to the arm host.
+#
+# The first thing I'd do is write a quick script to make it all easy for
+# you. Make sure the arm hosts mounts the boot partition by adding it to
+# its fstab file -- as I remember it didn't do that (a standard place
+# would be to mount this in /boot). Then just the make commands followed
+# by a couple scp commands for the kernel and modules in a quick shell
+# script that you can run.
+#
+# Note that this script is targetting for just the kernel (not the
+# user-space code or rootfs) and is intended to be called from the
+# top-level folder of a the linux kernel source tree.
+#
+# Note that the exact way you call this script will depend on your
+# system setup. As an example this has worked for me in the past:
+#
+# CROSSDIR=/home/batesste/stingray-ea3/poky/build/tmp/work/bcm958742t-poky-linux/\
+# brcm-linux/0.0.0-brcm-nxs_1.0_ea3-RC4-r0/recipe-sysroot-native/usr/bin/\
+# aarch64-poky-linux CONFIG=../configs/.config-stingray-ea3 \
+# ../build-stingray
+#
+# Also note that for our current setup we access the rootfs via the
+# following command
+#
+# sudo mount /dev/mmcblk1p1 /mnt/mmcblk1p1
+#
+# but we could auto-mount this via fstab so we can just scp files over
+# and reboot...
+
+  # Setup some script variables that can (optionally) be over-written
+  # by the script caller.
+
+CONFIG=${CONFIG:-.config}
+CROSSTOOLS=${CROSSTOOLS:-risv32-linux-gnu-}
+MODULEDIR=${MODULEDIR:-../modules-riscv}
+HEADERDIR=${HEADERDIR:-../headers-riscv}
+OUTPUTDIR=${OUTPUTDIR:-../output-riscv}
+TARGET_HOST=${TARGET_HOST:-none}
+CLEAN=${CLEAN:-no}
+THREADS=${THREADS:-16}
+
+TIME=$(date +"%m%d%Y-%H%M%S")
+
+  # Input argument check
+
+#if [ ! -x "${CROSSTOOLS}gcc" ]; then
+#   echo "Error: ${CROSSTOOLS} compile tools do not appear to exist."
+#   exit -1
+#fi
+
+  # Now run the build process. We also copy the .config somewhere safe
+  # with a timestamp added so we have it.
+
+export CROSS_COMPILE=${CROSSTOOLS}
+export ARCH=riscv
+
+rm -rf ${MODULEDIR}
+if [ $CLEAN != "no" ]; then
+    make clean
+fi
+cp $CONFIG .config
+make oldconfig
+cp .config ../.config-$TIME
+make -j $THREADS
+make INSTALL_MOD_PATH=$MODULEDIR modules_install
+make INSTALL_HDR_PATH=$HEADERDIR headers_install
+
+  # Prep the two things we need to move. The Image file and a tarball
+  # of the kernel modules.
+
+mkdir -p ${OUTPUTDIR}-${TIME}
+cp .config ${OUTPUTDIR}-${TIME}/.config-$TIME
+cp arch/riscv/boot/Image ${OUTPUTDIR}-${TIME}/Image-$TIME
+cd ${MODULEDIR}/lib/modules
+tar cvfz modules.tar.gz --exclude=modules.tar.gz *
+cd -
+cp ${MODULEDIR}/lib/modules/modules.tar.gz ${OUTPUTDIR}-${TIME}/modules-$TIME.tar.gz
+tar cvfz headers.tar.gz ${HEADERDIR}
+cp headers.tar.gz ${OUTPUTDIR}-${TIME}/headers-$TIME.tar.gz
+rm -rf ${MODULEDIR} ${HEADERDIR}
+
+if [ $TARGET_HOST != "none" ]; then
+    echo "TBD: scp kernel and modules to target host!"
+fi
