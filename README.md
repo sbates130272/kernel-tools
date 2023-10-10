@@ -11,7 +11,7 @@ repo into. I then have a number of sub-folders:
 directories for each architecture I am working on (e.g. arm64, riscv,
 x86 etc).
 
-+ **```p2pdma-configs```**: A folder for some good p2pdma configs. For
++ **```useful-configs```**: A folder for some good kernel configs. For
 example this includes a really small (but valid) config, a QEMU
 specific config and an Ubuntu 18.04 like config.
 
