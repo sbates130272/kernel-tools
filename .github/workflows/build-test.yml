@@ -14,4 +14,4 @@ jobs:
     - name: check out code using action/checkout
       uses: actions/checkout@v1
     - name: build package
-      run: CONFIG=./p2pdma-configs/config-x86_64-p2pdma-tiny ./build-latest-p2pdma-kernel
+      run: CONFIG=./useful-configs/config-x86_64-p2pdma-tiny ./build-latest-p2pdma-kernel
