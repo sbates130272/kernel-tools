@@ -7,9 +7,7 @@ This repo contains a few scripts I find useful for kernel hacking.
 I normally have a top-level folder called kernel which I place this
 repo into. I then have a number of sub-folders:
 
-+ **```linux-<arch>```**: The [Linux Kernel][1] tree with different
-directories for each architecture I am working on (e.g. arm64, riscv,
-x86 etc).
++ **```src```**: The [Linux Kernel][1] tree.
 
 + **```useful-configs```**: A folder for some good kernel configs. For
 example this includes a really small (but valid) config, a QEMU
