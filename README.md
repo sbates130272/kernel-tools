@@ -23,7 +23,8 @@ on Debian packages and not RPMs). Again I don't repo this.
 
 ```build-kernel-debrpm``` is a shell script that builds a kernel
 debian package or RHEL/CentOS RPM files for installation of a linux
-kernel. See the notes in the file for more information.
+kernel. See the notes in the file for more information. Note this
+script lives in the scripts folder.
 
 An example run of this script that would build a p2pdma enabled kernel
 based on version 4 of the patchsets would be:
