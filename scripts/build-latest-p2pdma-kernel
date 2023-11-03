@@ -16,4 +16,4 @@ export REMOTE
 PATCH=patches/p2pdma \
   ICECC=no \
   THREADS=128 \
-  ./build-kernel-debrpm
+  ./scripts/build-kernel-debrpm
