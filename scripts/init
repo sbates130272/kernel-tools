@@ -1,0 +1,21 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2023
+#
+# A simple script to initialize the directory tree for the Linux
+# kernel source and setup the appropriate git remotes.
+
+KERNEL_DIR=${KERNEL_DIR:-../src}
+
+git_kernel_init ()
+{
+    cd ${KERNEL_DIR}
+}
+
+echo ${KERNEL_DIR}
+  
+if [ -d "${KERNEL_DIR}" ]; then
+    echo "Creating kernel source in ${KERNEL_DIR}..."
+    mkdir ${KERNEL_DIR}
+    git_kernel_init ${KERNEL_DIR}
+fi
