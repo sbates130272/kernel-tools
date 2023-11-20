@@ -7,15 +7,25 @@
 
 KERNEL_DIR=${KERNEL_DIR:-../src}
 
+# Linus Remote
+GIT_REMOTE_LINUS=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+# Stable Remote
+GIT_REMOTE_STABLE=https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+
 git_kernel_init ()
 {
     cd ${KERNEL_DIR}
+    git init
+    git remote add linus ${GIT_REMOTE_LINUS}
+    git remote add stable ${GIT_REMOTE_STABLE}
 }
 
 echo ${KERNEL_DIR}
   
-if [ -d "${KERNEL_DIR}" ]; then
+if [ ! -d "${KERNEL_DIR}" ]; then
     echo "Creating kernel source in ${KERNEL_DIR}..."
     mkdir ${KERNEL_DIR}
     git_kernel_init ${KERNEL_DIR}
+else
+    echo "Kernel source folder (${KERNEL_DIR}) already exists. Exiting..."
 fi
