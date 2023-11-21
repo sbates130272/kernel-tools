@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2023
+#
+# A simple script to initialize the directory tree for the Linux
+# kernel source and setup the appropriate git remotes. If the directory exists we do an update fetch from the remotes and checkout a new stable branch if one has been tagged 
+
+set -e
+
+KERNEL_DIR=${KERNEL_DIR:-./src}
+GIT_REMOTE_LINUS=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+GIT_REMOTE_STABLE=https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
+KERNEL_DIR=$(pwd)/${KERNEL_DIR}
+
+git_check_tag ()
+{
+    if git branch | grep stable | grep $1; then
+	return 1
+    fi
+    return 0
+}
+
+git_kernel_init ()
+{
+    cd ${KERNEL_DIR}
+    git init
+    git remote add linus ${GIT_REMOTE_LINUS}
+    git remote add stable ${GIT_REMOTE_STABLE}
+}
+
+git_kernel_update ()
+{
+    cd ${KERNEL_DIR}
+    git fetch --depth=1 linus
+    git fetch --depth=1 stable
+    KERNEL_TAG=$(git tag | grep -v rc | tail -n 1)
+    if git_check_tag ${KERNEL_TAG}; then
+	git checkout -b stable-${KERNEL_TAG} ${KERNEL_TAG}
+    fi
+}
+
+if [ ! -d "${KERNEL_DIR}" ]; then
+    echo "Creating kernel source in ${KERNEL_DIR}..."
+    mkdir ${KERNEL_DIR}
+    git_kernel_init ${KERNEL_DIR}
+else
+    echo "Kernel source folder (${KERNEL_DIR}) already exists. Updating..."
+    git_kernel_update ${KERNEL_DIR}
+fi
