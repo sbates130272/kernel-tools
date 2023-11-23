@@ -1,0 +1,17 @@
+name: linux-tools-init-test
+
+on:
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  ubuntu-init-test:
+    name: ubuntu-init-test
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code.
+      uses: actions/checkout@v4.1.1
+    - name: Run the init-release script
+      run: ./scripts/init-update
+    - name: Run the init-release script again
+      run: ./scripts/init-update
