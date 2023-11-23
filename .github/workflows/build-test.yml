@@ -1,17 +1,16 @@
-name: build-latest-p2pdma-kernel testing
+name: linux-tools-build-test
+
 on:
-  push:
-    branches: [ master ]
   pull_request:
     branches: [ master ]
 
 jobs:
-  ubuntu:
-    name: ubuntu
+  ubuntu-build-test
+    name: ubuntu-build-test
     runs-on: ubuntu-latest
     container: us.gcr.io/eid-packer/eid-packer-ubuntu1804-kernel:20200413
     steps:
     - name: check out code using action/checkout
-      uses: actions/checkout@v1
+      uses: actions/checkout@v4.1.1
     - name: build package
       run: CONFIG=./useful-configs/config-x86_64-p2pdma-tiny ./scripts/build-latest-p2pdma-kernel

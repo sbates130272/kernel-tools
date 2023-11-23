@@ -45,5 +45,5 @@ if [ ! -d "${KERNEL_DIR}" ]; then
     git_kernel_init ${KERNEL_DIR}
 else
     echo "Kernel source folder (${KERNEL_DIR}) already exists. Updating..."
-    git_kernel_update ${KERNEL_DIR}
 fi
+git_kernel_update ${KERNEL_DIR}
