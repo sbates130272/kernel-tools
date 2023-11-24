@@ -2,7 +2,7 @@ name: linux-tools-docker-test
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   ubuntu-docker-test:
