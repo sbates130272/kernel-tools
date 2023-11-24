@@ -10,7 +10,7 @@
 # README.md for more information.
 
   # Change this to your preferred distro.
-FROM ubuntu:18.04
+FROM ubuntu:22.04
 
   # Note this list may change depending on the distro chosen.
 RUN apt-get update && apt-get install -y \
@@ -31,5 +31,5 @@ RUN apt-get update && apt-get install -y \
 RUN git clone https://github.com/sbates130272/kernel-tools.git kernel
 WORKDIR kernel
 ENV REMOTE http://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git
-RUN ./build-latest-p2pdma-kernel
+RUN ./scripts/build-latest-p2pdma-kernel
 RUN cp build-kernel-deb.*.tar.gz build-kernel-deb.docker.tar.gz
