@@ -2,7 +2,7 @@ name: linux-tools-spell-check
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
     paths:
     - '**.md'
     - '.wordlist.txt'

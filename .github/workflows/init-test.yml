@@ -2,7 +2,7 @@ name: linux-tools-init-test
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
 
 jobs:
   ubuntu-init-test:
