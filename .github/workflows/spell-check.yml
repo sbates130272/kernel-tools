@@ -9,8 +9,8 @@ on:
     - '.spellcheck.yml'
 
 jobs:
-  ubuntu-latest:
-    name: ubuntu-latest
+  spell-check:
+    name: spell-check
     runs-on: ubuntu-latest
     steps:
     - name: Check out code.

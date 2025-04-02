@@ -1,16 +1,18 @@
-name: linux-tools-init-test
+name: init-test
 
 on:
   pull_request:
-    branches: [ master ]
+    branches: [ main ]
+    paths:
+    - './scripts/init-update'
 
 jobs:
-  ubuntu-init-test:
-    name: ubuntu-init-test
+  init-test:
+    name: init-test
     runs-on: ubuntu-latest
     steps:
     - name: Check out code.
-      uses: actions/checkout@v4.1.1
+      uses: actions/checkout@v4.2.2
     - name: Run the init-release script
       run: ./scripts/init-update
     - name: Run the init-release script again
