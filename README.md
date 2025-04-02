@@ -1,13 +1,16 @@
-# Stephen's Kernel Tools
+# kernel-tools: A collection of useful Linux kernel tooling
 
-This repo contains a few scripts I find useful for kernel hacking.
+This repo contains a few scripts I find useful for kernel
+hacking. Feel free to use and abuse these as you see fit.
 
 ## Installation
 
 I normally have a top-level folder called kernel which I place this
 repo into. I then have a number of sub-folders:
 
-+ **```src```**: The [Linux Kernel][1] tree.
++ **```src```**: The [Linux Kernel][1] tree(s). A good way to
+initialize this folder is to use the ```./scripts/init-update```
+script (see below for details).
 
 + **```useful-configs```**: A folder for some good kernel configs. For
 example this includes a really small (but valid) config, a QEMU
@@ -19,7 +22,22 @@ don't repo this or tie it to a separate private repo.
 + **```debs```**: A folder of handy output .debs (I almost always work
 on Debian packages and not RPMs). Again I don't repo this.
 
-## build-kernel-debrpm
+## Useful Scripts
+
+### init-update
+
+This [script](./scripts/init-update) can be used to initialize a Linux
+kernel git tree with both Linus' and Greg's trees. It can also be used
+to fetch updates for these remotes.
+
+### build-remote
+
+This [script](./scripts/build-remote) can be used to fetch the kernel
+config from a remote machine and then use this as a base to build a
+new kernel and install it on that machine. This is useful for running
+on VMs but it only tested for Ubuntu-based systems.
+
+### build-kernel-debrpm
 
 ```build-kernel-debrpm``` is a shell script that builds a kernel
 debian package or RHEL/CentOS RPM files for installation of a linux
@@ -57,27 +75,14 @@ Note all files associated with the unique generation of this kernel
 output tarball along with a ```.build-info file``` that contains the
 information needed to reproduce the .debs or .rpms.
 
-## build-latest-p2pdma-kernel
+### build-latest-p2pdma-kernel
 
 A helper script around ```build-kernel-debrpm``` that should always
 point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to use
 build-kernel-debrpm. Only supports x86_64 right now.
 
-## init-update
-
-This [script](./scripts/init-update) can be used to initialize a Linux
-kernel git tree with both Linus' and Greg's trees. It can also be used
-to fetch updates for these remotes.
-
-## build-remote
-
-This [script](./scripts/build-remote) can be used to fetch the kernel
-config from a remote machine and then use this as a base to build a
-new kernel and install it on that machine. This is useful for running
-on VMs but it only tested for Ubuntu-based systems.
-
-### Patches
+#### Patches for build-latest-p2pdma-kernel
 
 ```build-latest-p2pdma-kernel``` uses three patches (located in the
 patches folder) to address some issues with p2pdma kernels. Namely:
