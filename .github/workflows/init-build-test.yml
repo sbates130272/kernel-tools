@@ -1,4 +1,4 @@
-name: init-test
+name: init-build-test
 
 on:
   pull_request:
