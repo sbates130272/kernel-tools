@@ -13,6 +13,7 @@ set -e
 
 REMOTE_NAME=${REMOTE_NAME:-none}
 CONFIG=${CONFIG:-none}
+LABEL=${LABEL:--build-remote}
 
 # Hardcode ARCH for now.
 ARCH=x86
@@ -45,7 +46,28 @@ function setup {
     scripts/config --disable GPIO_BT8XX
     make LSMOD=${REMOTE_NAME}-${CONFIG}-lsmod localmodconfig
     ./scripts/config --enable LOCALVERSION_AUTO
-    ./scripts/config --set-str LOCALVERSION -build-remote
+    ./scripts/config --set-str LOCALVERSION ${LABEL}
+    ./scripts/config -m INFINIBAND
+    ./scripts/config --enable INFINIBAND_ADDR_TRANS
+    ./scripts/config -m BLK_DEV_NVME
+    ./scripts/config -m NVME_TARGET
+    ./scripts/config -m NVME_KEYRING
+    ./scripts/config -m NVME_AUTH
+    ./scripts/config -m NVME_CORE
+    ./scripts/config --enable NVME_MULTIPATH
+    ./scripts/config --enable NVME_HWMON
+    ./scripts/config -m NVME_FABRICS
+    ./scripts/config -m NVME_RDMA
+    ./scripts/config -m NVME_TCP
+    ./scripts/config --enable NVME_TCP_TLS
+    ./scripts/config --enable NVME_HOST_AUTH
+    ./scripts/config --enable NVME_TARGET_PASSTHRU
+    ./scripts/config -m NVME_TARGET_LOOP
+    ./scripts/config -m NVME_TARGET_RDMA
+    ./scripts/config -m NVME_TARGET_TCP
+    ./scripts/config --enable NVME_TARGET_TCP_TLS
+    ./scripts/config --enable NVME_TARGET_AUTH
+    make olddefconfig
 }
 
 function build {
@@ -63,6 +85,8 @@ function install {
         "sudo update-initramfs -c -k ${VERSION}"
     ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
         "sudo update-grub"
+    ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        "sudo linux-update-symlinks install ${VERSION} /boot/vmlinuz-${VERSION}"
     ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
         "sudo reboot now"
 }
