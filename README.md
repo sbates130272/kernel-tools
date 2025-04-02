@@ -64,6 +64,19 @@ point to the latest and greatest p2pdma kernel. Run this to generate a
 p2pdma kernel unless you know what you are doing and want to use
 build-kernel-debrpm. Only supports x86_64 right now.
 
+## init-update
+
+This [script](./scripts/init-update) can be used to initialize a Linux
+kernel git tree with both Linus' and Greg's trees. It can also be used
+to fetch updates for these remotes.
+
+## build-remote
+
+This [script](./scripts/build-remote) can be used to fetch the kernel
+config from a remote machine and then use this as a base to build a
+new kernel and install it on that machine. This is useful for running
+on VMs but it only tested for Ubuntu-based systems.
+
 ### Patches
 
 ```build-latest-p2pdma-kernel``` uses three patches (located in the

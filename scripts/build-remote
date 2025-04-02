@@ -1,0 +1,73 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2025
+#
+# A simple script to build a minimal (localmodconfig) kernel based on
+# a remote target using the kernel source tree already checked out on
+# the local machine. Useful for updating kernels on VMs (for example).
+#
+# Note that you must call this script from the root of a kernel source
+# tree.
+
+set -e
+
+REMOTE_NAME=${REMOTE_NAME:-none}
+CONFIG=${CONFIG:-none}
+
+# Hardcode ARCH for now.
+ARCH=x86
+
+if [ ${REMOTE_NAME} == "none" ]; then
+    echo "Error. You must specify a REMOTE_NAME to ssh into."; exit -1
+fi
+if [ ${CONFIG} == "none" ]; then
+    echo "Error. You must specify a CONFIG file."; exit -1
+fi
+
+function clean {
+    make distclean
+    rm -rf linux-*.tar.gz \
+       *-lsmod \
+       config-* \
+       ${REMOTE_NAME}-${CONFIG}
+}
+
+function setup {
+    scp -F ${HOME}/.ssh/config \
+        ${REMOTE_NAME}:/boot/${CONFIG} ${REMOTE_NAME}-${CONFIG}
+    cp ${REMOTE_NAME}-${CONFIG} .config
+    ssh -F ${HOME}/.ssh/config ${REMOTE_NAME} \
+        lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
+    scripts/config --disable SYSTEM_TRUSTED_KEYRING
+    scripts/config --disable SYSTEM_TRUSTED_KEYS
+    scripts/config --disable SYSTEM_REVOCATION_KEYS
+    make olddefconfig
+    scripts/config --disable GPIO_BT8XX
+    make LSMOD=${REMOTE_NAME}-${CONFIG}-lsmod localmodconfig
+    ./scripts/config --enable LOCALVERSION_AUTO
+    ./scripts/config --set-str LOCALVERSION -build-remote
+}
+
+function build {
+    time make -j $(nproc) targz-pkg
+}
+
+function install {
+    TARBALL=$(ls linux-*.tar.gz)
+    VERSION=$(ls linux-*.tar.gz | sed -E "s/(linux-)(.*)-${ARCH}.tar.gz/\2/")
+    echo "INSTALL: Installing ${TARBALL} (${VERSION}) on ${REMOTE_NAME}."
+    scp -F ${HOME}/.ssh/config ${TARBALL} ${REMOTE_NAME}:/tmp/
+    ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        "sudo tar -C / --exclude=vmlinux-* -xkvf /tmp/${TARBALL}"
+    ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        "sudo update-initramfs -c -k ${VERSION}"
+    ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        "sudo update-grub"
+    ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        "sudo reboot now"
+}
+
+clean
+setup
+build
+install

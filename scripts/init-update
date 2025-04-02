@@ -3,7 +3,9 @@
 # (c) Stephen Bates, 2023
 #
 # A simple script to initialize the directory tree for the Linux
-# kernel source and setup the appropriate git remotes. If the directory exists we do an update fetch from the remotes and checkout a new stable branch if one has been tagged 
+# kernel source and setup the appropriate git remotes. If the
+# directory exists we do an update fetch from the remotes and checkout
+# a new stable branch if one has been tagged.
 
 set -e
 
