@@ -5,10 +5,11 @@ on:
     branches: [ main ]
     paths:
     - './scripts/init-update'
+    - './scripts/build-remote'
 
 jobs:
-  init-test:
-    name: init-test
+  init-build-test:
+    name: init-build-test
     runs-on: ubuntu-latest
     steps:
     - name: Check out code.
@@ -17,3 +18,7 @@ jobs:
       run: ./scripts/init-update
     - name: Run the init-release script again
       run: ./scripts/init-update
+    - name: Run the build-remote script
+      run: ./scripts/build-remote
+      env:
+        REMOTE_NAME: localhost
