@@ -67,6 +67,13 @@ function setup {
     ./scripts/config -m NVME_TARGET_TCP
     ./scripts/config --enable NVME_TARGET_TCP_TLS
     ./scripts/config --enable NVME_TARGET_AUTH
+    ./scripts/config -m NET_9P
+    ./scripts/config -m NET_9P_FD
+    ./scripts/config -m NET_9P_VIRTIO
+    ./scripts/config -m 9P_FS
+    ./scripts/config --enable 9P_FSCACHE
+    ./scripts/config --enable 9P_FS_POSIX_ACL
+    ./scripts/config --enable 9P_FS_SECURITY
     make olddefconfig
 }
 
@@ -80,7 +87,7 @@ function install {
     echo "INSTALL: Installing ${TARBALL} (${VERSION}) on ${REMOTE_NAME}."
     scp -F ${HOME}/.ssh/config ${TARBALL} ${REMOTE_NAME}:/tmp/
     ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
-        "sudo tar -C / --exclude=vmlinux-* -xkvf /tmp/${TARBALL}"
+        "sudo tar -C / --exclude=vmlinux-* -xhvf /tmp/${TARBALL}"
     ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
         "sudo update-initramfs -c -k ${VERSION}"
     ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
