@@ -33,8 +33,8 @@ git_kernel_init ()
 git_kernel_update ()
 {
     cd ${KERNEL_DIR}
-    git fetch --depth=1 linus
-    git fetch --depth=1 stable
+    git fetch --no-show-forced-updates --depth=1 linus
+    git fetch --no-show-forced-updates --depth=1 stable
     KERNEL_TAG=$(git tag | grep -v rc | tail -n 1)
     if git_check_tag ${KERNEL_TAG}; then
 	git checkout -b stable-${KERNEL_TAG} ${KERNEL_TAG}
