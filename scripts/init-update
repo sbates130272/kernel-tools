@@ -4,8 +4,10 @@
 #
 # A simple script to initialize the directory tree for the Linux
 # kernel source and setup the appropriate git remotes. If the
-# directory exists we do an update fetch from the remotes and checkout
-# a new stable branch if one has been tagged.
+# directory exists we do an update fetch from the remotes.
+#
+# We check for any new stable tags and if new one(s) exist we checkout
+# the latest one.
 
 set -e
 
@@ -19,9 +21,9 @@ GIT_REMOTE_WSL2=https://github.com/microsoft/WSL2-Linux-Kernel.git
 git_check_tag ()
 {
     if git branch | grep stable | grep $1; then
-	return 1
+	echo 1
     fi
-    return 0
+    echo 0
 }
 
 git_kernel_init ()
@@ -37,10 +39,13 @@ git_kernel_update ()
 {
     cd ${KERNEL_DIR}
     git fetch --all -j $(nproc) --no-show-forced-updates --depth=1
-    KERNEL_TAG=$(git tag | grep -v rc | tail -n 1)
-    if git_check_tag ${KERNEL_TAG}; then
-        echo "  Checking out ${KERNEL_TAG} as local branch stable-${KERNEL_TAG}."
-	git checkout -b stable-${KERNEL_TAG} ${KERNEL_TAG}
+    NEWEST_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
+    echo "  INFO: Newest stable tag detected is ${NEWEST_TAG}."
+    if [[ $(git_check_tag ${NEWEST_TAG}) == "0" ]]; then
+        echo "  INFO: Checking out ${NEWEST_TAG} locally as stable-${NEWEST_TAG}."
+	git checkout -b stable-${NEWEST_TAG} ${NEWEST_TAG}
+    else
+        echo "  INFO: Local branch stable-${NEWEST_TAG} already exists."
     fi
 }
 
