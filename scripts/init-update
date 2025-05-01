@@ -51,7 +51,7 @@ git_kernel_update ()
 
 if [ ! -d "${KERNEL_DIR}" ]; then
     echo "Creating kernel source in ${KERNEL_DIR}..."
-    mkdir ${KERNEL_DIR}
+    mkdir -p ${KERNEL_DIR}
     git_kernel_init ${KERNEL_DIR}
 else
     echo "Kernel source folder (${KERNEL_DIR}) already exists. Updating..."
