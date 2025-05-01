@@ -12,6 +12,8 @@
 set -e
 
 KERNEL_DIR=${KERNEL_DIR:-./src}
+GIT_DEPTH=${GIT_DEPTH:-1}
+
 KERNEL_DIR=$(pwd)/${KERNEL_DIR}
 
 GIT_REMOTE_LINUS=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
@@ -38,7 +40,7 @@ git_kernel_init ()
 git_kernel_update ()
 {
     cd ${KERNEL_DIR}
-    git fetch --all -j $(nproc) --no-show-forced-updates --depth=1
+    git fetch --all -j $(nproc) --no-show-forced-updates --depth=${GIT_DEPTH}
     NEWEST_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
     echo "  INFO: Newest stable tag detected is ${NEWEST_TAG}."
     if [[ $(git_check_tag ${NEWEST_TAG}) == "0" ]]; then
