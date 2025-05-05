@@ -1,4 +1,4 @@
-name: kernel-tools
+name: spell-check
 
 on:
   workflow_dispatch:

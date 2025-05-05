@@ -1,4 +1,4 @@
-name: kernel-tools
+name: init-build-test
 
 on:
   workflow_dispatch:
