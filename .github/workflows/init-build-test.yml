@@ -1,6 +1,7 @@
-name: init-build-test
+name: kernel-tools
 
 on:
+  workflow_dispatch:
   pull_request:
     branches: [ main ]
     paths:

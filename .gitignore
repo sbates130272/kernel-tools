@@ -1,4 +1,5 @@
 *~
+patches/
 src/
 linux-*/
 configs/
