@@ -8,6 +8,12 @@
 #
 # Note that you must call this script from the root of a kernel source
 # tree.
+#
+# Am example usage might be:
+#
+# REMOTE_NAME=local-test-vm \
+#    CONFIG=config-6.8.0-60-generic \
+#    LABEL=-example-label ./build-remote
 
 set -e
 
