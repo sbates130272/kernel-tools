@@ -80,6 +80,7 @@ function setup {
     ./scripts/config --enable 9P_FSCACHE
     ./scripts/config --enable 9P_FS_POSIX_ACL
     ./scripts/config --enable 9P_FS_SECURITY
+    ./scripts/config -m DRM_AMDGPU
     make olddefconfig
 }
 
