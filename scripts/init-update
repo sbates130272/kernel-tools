@@ -13,6 +13,7 @@ set -e
 
 KERNEL_DIR=${KERNEL_DIR:-./src}
 GIT_DEPTH=${GIT_DEPTH:-1}
+CHECK_OUT=${CHECK_OUT:-no}
 
 KERNEL_DIR=$(pwd)/${KERNEL_DIR}
 
@@ -44,8 +45,12 @@ git_kernel_update ()
     NEWEST_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
     echo "  INFO: Newest stable tag detected is ${NEWEST_TAG}."
     if [[ $(git_check_tag ${NEWEST_TAG}) == "0" ]]; then
-        echo "  INFO: Checking out ${NEWEST_TAG} locally as stable-${NEWEST_TAG}."
-	git checkout -b stable-${NEWEST_TAG} ${NEWEST_TAG}
+        if [ ${CHECK_OUT} == "yes" ]; then
+            echo "  INFO: Checking out ${NEWEST_TAG} locally as stable-${NEWEST_TAG}."
+	    git checkout -b stable-${NEWEST_TAG} ${NEWEST_TAG}
+        else
+            echo "  INFO: New tag (${NEWEST_TAG}) but skipping (CHECK_OUT=${CHECK_OUT})."
+        fi
     else
         echo "  INFO: Local branch stable-${NEWEST_TAG} already exists."
     fi
