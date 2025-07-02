@@ -19,6 +19,9 @@
 #    CONFIG=config-6.8.0-60-generic \
 #    CONFIG_SCRIPT=default \
 #    LABEL=-example-label ./build-remote
+#
+# Note we can set NO_BUILD=true to stop after the clean and setup
+# steps. Useful for testing and CI.
 
 set -e
 
@@ -26,6 +29,7 @@ REMOTE_NAME=${REMOTE_NAME:-none}
 CONFIG=${CONFIG:-none}
 CONFIG_SCRIPT=${CONFIG_SCRIPT:-none}
 LABEL=${LABEL:--build-remote}
+NO_BUILD=${NO_BUILD:-false}
 
 # Hardcode ARCH for now.
 ARCH=x86
@@ -95,5 +99,9 @@ function install {
 
 clean
 setup
+if [ ${NO_BUILD} == "true" ]; then
+    echo "INFO. User requested we stop after setup. Exiting."
+    exit 0
+fi
 build
 install
