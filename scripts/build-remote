@@ -9,20 +9,29 @@
 # Note that you must call this script from the root of a kernel source
 # tree.
 #
-# Am example usage might be:
+# Note you can point to a file that contains a specific set of config
+# script calls so we can build kernels specific to a given task. We
+# store some our favourite such configs in the appropriate folder.
+#
+# An example usage might be:
 #
 # REMOTE_NAME=local-test-vm \
 #    CONFIG=config-6.8.0-60-generic \
+#    CONFIG_SCRIPT=default \
 #    LABEL=-example-label ./build-remote
 
 set -e
 
 REMOTE_NAME=${REMOTE_NAME:-none}
 CONFIG=${CONFIG:-none}
+CONFIG_SCRIPT=${CONFIG_SCRIPT:-none}
 LABEL=${LABEL:--build-remote}
 
 # Hardcode ARCH for now.
 ARCH=x86
+
+# Get script path
+SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd)
 
 if [ ${REMOTE_NAME} == "none" ]; then
     echo "Error. You must specify a REMOTE_NAME to ssh into."; exit -1
@@ -45,6 +54,7 @@ function setup {
     cp ${REMOTE_NAME}-${CONFIG} .config
     ssh -F ${HOME}/.ssh/config ${REMOTE_NAME} \
         lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
+
     scripts/config --disable SYSTEM_TRUSTED_KEYRING
     scripts/config --disable SYSTEM_TRUSTED_KEYS
     scripts/config --disable SYSTEM_REVOCATION_KEYS
@@ -53,34 +63,12 @@ function setup {
     make LSMOD=${REMOTE_NAME}-${CONFIG}-lsmod localmodconfig
     ./scripts/config --enable LOCALVERSION_AUTO
     ./scripts/config --set-str LOCALVERSION ${LABEL}
-    ./scripts/config -m INFINIBAND
-    ./scripts/config --enable INFINIBAND_ADDR_TRANS
-    ./scripts/config -m BLK_DEV_NVME
-    ./scripts/config -m NVME_TARGET
-    ./scripts/config -m NVME_KEYRING
-    ./scripts/config -m NVME_AUTH
-    ./scripts/config -m NVME_CORE
-    ./scripts/config --enable NVME_MULTIPATH
-    ./scripts/config --enable NVME_HWMON
-    ./scripts/config -m NVME_FABRICS
-    ./scripts/config -m NVME_RDMA
-    ./scripts/config -m NVME_TCP
-    ./scripts/config --enable NVME_TCP_TLS
-    ./scripts/config --enable NVME_HOST_AUTH
-    ./scripts/config --enable NVME_TARGET_PASSTHRU
-    ./scripts/config -m NVME_TARGET_LOOP
-    ./scripts/config -m NVME_TARGET_RDMA
-    ./scripts/config -m NVME_TARGET_TCP
-    ./scripts/config --enable NVME_TARGET_TCP_TLS
-    ./scripts/config --enable NVME_TARGET_AUTH
-    ./scripts/config -m NET_9P
-    ./scripts/config -m NET_9P_FD
-    ./scripts/config -m NET_9P_VIRTIO
-    ./scripts/config -m 9P_FS
-    ./scripts/config --enable 9P_FSCACHE
-    ./scripts/config --enable 9P_FS_POSIX_ACL
-    ./scripts/config --enable 9P_FS_SECURITY
-    ./scripts/config -m DRM_AMDGPU
+
+    if [ ${CONFIG_SCRIPT} != "none" ]; then
+        echo "INFO: Applying the .config mods in config-${CONFIG_SCRIPT}."
+        source ${SCRIPT_DIR}/../config-scripts/config-${CONFIG_SCRIPT}
+    fi
+
     make olddefconfig
 }
 

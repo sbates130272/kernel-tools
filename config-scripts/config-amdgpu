@@ -1,0 +1,5 @@
+source ${SCRIPT_DIR}/../config-scripts/config-default
+source ${SCRIPT_DIR}/../config-scripts/config-infiniband
+source ${SCRIPT_DIR}/../config-scripts/config-nvme-target
+
+./scripts/config -m DRM_AMDGPU
