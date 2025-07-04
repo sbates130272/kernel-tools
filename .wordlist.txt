@@ -29,6 +29,7 @@ iov
 li
 linux
 lt
+microsoft
 patchsets
 pci
 pdma
@@ -45,4 +46,5 @@ src
 ul
 userspace
 VMs
+WSL
 www
