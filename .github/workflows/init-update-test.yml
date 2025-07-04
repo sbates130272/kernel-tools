@@ -1,0 +1,30 @@
+name: init-update-test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+    - 'scripts/init-update'
+
+jobs:
+  init-update-test:
+    name: init-update-test
+    runs-on: ubuntu-latest
+    env:
+      CHECK_OUT: yes
+      GIT_DEPTH: 1
+    steps:
+    - name: Check out code.
+      uses: actions/checkout@v4.2.2
+    - name: Fix git warning
+      run: git config --global init.defaultBranch main
+    - name: Run the init-update script
+      run: ./scripts/init-update
+    - name: Run the init-update script again
+      run: ./scripts/init-update
+    - name: Run the init-update script and do a wsl-based branch
+      run: ./scripts/init-update
+      env:
+        CHECK_OUT: wsl2/linux-msft-wsl-6.6.y
