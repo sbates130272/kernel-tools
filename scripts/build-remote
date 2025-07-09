@@ -20,6 +20,11 @@
 #    CONFIG_SCRIPT=default \
 #    LABEL=-example-label ./build-remote
 #
+# Note you can set REMOTE_NAME=localhost. In this case you will build
+# based on any arbitary config file as specified by CONFIG. Note you
+# cannot use this in conjunction with WSL_MODE (which assumes
+# REMOTE_NAME=localhost).
+#
 # Note we can set NO_BUILD=true to stop after the clean and setup
 # steps. Useful for testing and CI.
 #
@@ -80,6 +85,12 @@ function setup {
     if [ ${WSL_MODE} == "true" ]; then
         cp ./Microsoft/${CONFIG} ${REMOTE_NAME}-${CONFIG}
         lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
+    elif [ ${REMOTE_NAME} == "localhost" ]; then
+        if [ ! -f ${CONFIG} ]; then
+            echo "Error: localhost CONFIG (${CONFIG}) does not exist."; exit -1
+        fi
+        cp ${CONFIG} ${REMOTE_NAME}-${CONFIG}
+        lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
     else
         scp -F ${HOME}/.ssh/config \
             ${REMOTE_NAME}:/boot/${CONFIG} ${REMOTE_NAME}-${CONFIG}
@@ -125,7 +136,7 @@ function build {
 
 function install {
     if [ ${WSL_MODE} == "true" ]; then
-        echo "INSTALL. Installing via WSL_MODE (${VERSION})."
+        echo "INSTALL: Installing via WSL_MODE (${VERSION})."
         cp ./arch/${ARCH}/boot/bzImage ${WSL_KERNEL_DIR}/bzImage-${VERSION}
         cp modules-${VERSION}.vhdx ${WSL_KERNEL_DIR}/modules/
         WIN_KERNEL_DIR=$(wslpath  -w ${WSL_KERNEL_DIR} | sed s/\\\\/\\\\\\\\\/g)
@@ -137,6 +148,9 @@ function install {
 	EOF
         cp ${WSL_CONFIG} ${WSL_CONFIG}.backup
         cp wslconfig-${VERSION} ${WSL_CONFIG}
+    elif [ ${REMOTE_NAME} == "localhost" ]; then
+        echo "INSTALL: Installing with REMOTE=localhost (${VERSION})."
+        echo "  INSTALL: In localhost mode do nothing for install (for now)."
     else
         TARBALL=$(ls linux-*.tar.gz)
         echo "INSTALL: Installing ${TARBALL} (${VERSION}) on ${REMOTE_NAME}."
