@@ -1,4 +1,4 @@
-name: spell-check
+name: spell-check-test
 
 on:
   workflow_dispatch:
@@ -11,8 +11,8 @@ on:
       - '.spellcheck.yml'
 
 jobs:
-  spell-check:
-    name: spell-check
+  spell-check-test:
+    name: spell-check-test
     runs-on: ubuntu-latest
     steps:
     - name: Check out code.
