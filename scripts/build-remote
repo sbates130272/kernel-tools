@@ -26,7 +26,7 @@
 # REMOTE_NAME=localhost).
 #
 # Note we can set NO_BUILD=true to stop after the clean and setup
-# steps. Useful for testing and CI.
+# steps. Useful for testing and CI. Same goes for NO_INSTALL.
 #
 # Note the WSL_MODE builds for Windows Subsystem for Linux. This does
 # not need a REMOTE_NAME as it assumes this is targeting the local
@@ -47,6 +47,7 @@ LABEL=${LABEL:--build-remote}
 NO_BUILD=${NO_BUILD:-false}
 WSL_MODE=${WSL_MODE:-false}
 WIN_USER=${WIN_USER:-stebates}
+NO_INSTALL=${NO_INSTALL:-false}
 
 # Hardcode ARCH for now.
 ARCH=x86
@@ -178,4 +179,8 @@ if [ ${NO_BUILD} == "true" ]; then
     exit 0
 fi
 build
+if [ ${NO_INSTALL} == "true" ]; then
+    echo "INFO. User requested we stop before install. Exiting."
+    exit 0
+fi
 install
