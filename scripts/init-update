@@ -42,17 +42,21 @@ git_kernel_update ()
 {
     cd ${KERNEL_DIR}
     git fetch --all -j $(nproc) --no-show-forced-updates --depth=${GIT_DEPTH}
-    NEWEST_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
-    echo "  INFO: Newest stable tag detected is ${NEWEST_TAG}."
-    if [[ $(git_check_tag ${NEWEST_TAG}) == "0" ]]; then
-        if [ ${CHECK_OUT} == "yes" ]; then
-            echo "  INFO: Checking out ${NEWEST_TAG} locally as stable-${NEWEST_TAG}."
-	    git checkout -b stable-${NEWEST_TAG} ${NEWEST_TAG}
+    NEWEST_STABLE_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
+    echo "  INFO: Newest stable tag detected is ${NEWEST_STABLE_TAG}."
+    if [ ${CHECK_OUT} == "yes" ]; then
+        if [[ $(git_check_tag ${NEWEST_STABLE_TAG}) == "0" ]]; then
+            echo "  INFO: Checking out ${NEWEST_STABLE_TAG} locally as stable-${NEWEST_STABLE_TAG}."
+            git checkout -b stable-${NEWEST_STABLE_TAG} ${NEWEST_STABLE_TAG}
         else
-            echo "  INFO: New tag (${NEWEST_TAG}) but skipping (CHECK_OUT=${CHECK_OUT})."
+            echo "  INFO: Local branch stable-${NEWEST_STABLE_TAG} already exists."
         fi
+    elif [ ${CHECK_OUT} == "no" ]; then
+        echo "  INFO: Newest tag is (${NEWEST_STABLE_TAG}) but skipping check out."
     else
-        echo "  INFO: Local branch stable-${NEWEST_TAG} already exists."
+        NOW=$(date +%s)
+        echo "  INFO: Attempting to checkout remote ${CHECK_OUT} to check-out-${NOW}."
+        git checkout -b check-out-${NOW} ${CHECK_OUT}
     fi
 }
 
