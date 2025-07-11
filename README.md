@@ -8,29 +8,30 @@ hacking. Feel free to use and abuse these as you see fit.
 I normally have a top-level folder called kernel which I place this
 repo into. I then have a number of sub-folders:
 
-+ **```src```**: The [Linux Kernel][1] tree(s). A good way to
-initialize this folder is to use the ```./scripts/init-update```
-script (see below for details).
-
-+ **```useful-configs```**: A folder for some good kernel configs. For
-example this includes a really small (but valid) config, a QEMU
-specific config and an Ubuntu 18.04 like config.
-
-+ **```configs```**: A folder for all the other configs I use, I usually
-don't repo this or tie it to a separate private repo.
-
-+ **```debs```**: A folder of handy output .debs (I almost always work
-on Debian packages and not RPMs). Again I don't repo this.
+- **```src```**: The [Linux Kernel][ref-linus] tree(s). A good way to
+  initialize this folder is to use the ```./scripts/init-update```
+  script (see below for details).
+- **```useful-configs```**: A folder for some good kernel configs. For
+  example this includes a really small (but valid) config, a QEMU
+  specific config and an Ubuntu 18.04 like config.
+- **```configs```**: A folder for all the other configs I use, I
+  usually don't repo this or tie it to a separate private repo.
+- **```debs```**: A folder of handy output .debs (I almost always work
+  on Debian packages and not RPMs). Again I don't repo this.
+-**```config-scripts```**: A folder of handy flavors of kernel
+  configurations. Useful for building a kernel with certain attributes
+  that I desire.
 
 ## Useful Scripts
 
-### init-update
+### [init-update](./scripts/init-update)
 
 This [script](./scripts/init-update) can be used to initialize a Linux
-kernel git tree with both Linus' and Greg's trees. It can also be used
-to fetch updates for these remotes.
+kernel git repo with Linus', Greg's and the [Microsoft WSL][ref-wsl]
+kernel source trees. It can also be used to fetch updates from these
+remotes.
 
-### build-remote
+### [build-remote](./scripts/build-remote)
 
 This [script](./scripts/build-remote) can be used to fetch the kernel
 config from a remote machine and then use this as a base to build a
@@ -88,13 +89,13 @@ build-kernel-debrpm. Only supports x86_64 right now.
 patches folder) to address some issues with p2pdma kernels. Namely:
 
 + **acs_disable**: Add a kernel configuration parameter
-(```acs_disable```) that turns off [PCIe ACS][2] everywhere. This can
-be useful for testing p2pdma. To enable this mode add
-```pci=acs_disable``` to your kernel command line parameters.
+(```acs_disable```) that turns off [PCIe ACS][ref-sriov]
+everywhere. This can be useful for testing p2pdma. To enable this mode
+add ```pci=acs_disable``` to your kernel command line parameters.
 
 + **p2pmem-pci**: Adds a device driver for p2pmem exposed by a device
-driver. Based on [this repository][3]. We use this to expose p2pmem to
-userspace applications.
+driver. Based on [this repository][ref-eid]. We use this to expose
+p2pmem to userspace applications.
 
 + **p2pdma patches**: A couple of changes were made in ```p2pdma.c```
 in the v5.4 kernel that broke out of tree drivers for p2pmem. These
@@ -143,6 +144,7 @@ source tree. See the header of the script for more information. There
 is also a ```build-riscv``` script which can do something similar for
 riscv32 and riscv64 ISA.
 
-[1]: https://www.kernel.org/
-[2]: http://www.intel.com/content/www/us/en/pci-express/pci-sig-sr-iov-primer-sr-iov-technology-paper.html
-[3]: https://github.com/Eideticom/p2pmem-pci
+[ref-linus]: https://www.kernel.org/
+[ref-sriov]: http://www.intel.com/content/www/us/en/pci-express/pci-sig-sr-iov-primer-sr-iov-technology-paper.html
+[ref-eid]: https://github.com/Eideticom/p2pmem-pci
+[ref-wsl]: https://github.com/microsoft/WSL2-Linux-Kernel

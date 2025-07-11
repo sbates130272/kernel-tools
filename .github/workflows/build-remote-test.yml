@@ -1,0 +1,70 @@
+name: build-remote-test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/build-remote'
+
+jobs:
+  build-remote-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        mode: [ localhost, wsl ]
+        include:
+          - mode: localhost
+            CHECK_OUT: yes
+            REMOTE_NAME: localhost
+            CONFIG: test-config
+            CONFIG_SCRIPT: default
+            WSL_MODE: false
+            NO_INSTALL: false
+            LABEL: -build-remote-localhost-test
+          - mode: wsl
+            CHECK_OUT: wsl2/linux-msft-wsl-6.6.y
+            REMOTE_NAME: none
+            CONFIG: none
+            CONFIG_SCRIPT: wsl
+            WSL_MODE: true
+            NO_INSTALL: true
+            LABEL: -build-remote-wsl-test
+    steps:
+    - name: Check out code.
+      uses: actions/checkout@v4.2.2
+    - name: Fix git warning
+      run: git config --global init.defaultBranch main
+    - name: Install packages needed to build the linux kernel
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          bison \
+          build-essential \
+          flex \
+          libelf-dev \
+          libncurses-dev \
+          libssl-dev \
+          nasm \
+          pahole
+    - name: Run the init-update script to obtain kernel (${{matrix.mode}} mode)
+      run: ./scripts/init-update
+      env:
+        CHECK_OUT: ${{ matrix.CHECK_OUT }}
+        GIT_DEPTH: 1
+    - name: Generate a default kernel config file
+      run: make defconfig && mv .config test-config
+      working-directory:
+        ./src
+    - name: Run the build-remote script (${{matrix.mode}} mode)
+      run: ../scripts/build-remote
+      working-directory:
+        ./src
+      env:
+        REMOTE_NAME: ${{ matrix.REMOTE_NAME }}
+        CONFIG: ${{ matrix.CONFIG }}
+        CONFIG_SCRIPT: ${{ matrix.CONFIG_SCRIPT }}
+        WSL_MODE: ${{ matrix.WSL_MODE }}
+        NO_INSTALL: ${{ matrix.NO_INSTALL }}
+        LABEL: ${{ matrix.LABEL }}

@@ -1,0 +1,2 @@
+source ${SCRIPT_DIR}/../config-scripts/config-default
+source ${SCRIPT_DIR}/../config-scripts/config-infiniband
