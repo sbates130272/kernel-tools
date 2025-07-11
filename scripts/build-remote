@@ -124,12 +124,6 @@ function build {
         MODULES_PATH=./modules-${VERSION}
         time INSTALL_MOD_PATH=${MODULES_PATH} make -j $(nproc) \
              modules_install
-        sudo ./Microsoft/scripts/gen_modules_vhdx.sh \
-             ${MODULES_PATH} \
-             ${VERSION} \
-             modules-${VERSION}.vhdx &> /dev/null
-        sudo chown $(id -u):$(id -g) modules-${VERSION}.vhdx
-        rm -rf ${MODULES_PATH}
     else
         time make -j $(nproc) targz-pkg
     fi
@@ -138,6 +132,13 @@ function build {
 function install {
     if [ ${WSL_MODE} == "true" ]; then
         echo "INSTALL: Installing via WSL_MODE (${VERSION})."
+        MODULES_PATH=./modules-${VERSION}
+        sudo ./Microsoft/scripts/gen_modules_vhdx.sh \
+             ${MODULES_PATH} \
+             ${VERSION} \
+             modules-${VERSION}.vhdx &> /dev/null
+        sudo chown $(id -u):$(id -g) modules-${VERSION}.vhdx
+        rm -rf ${MODULES_PATH}
         cp ./arch/${ARCH}/boot/bzImage ${WSL_KERNEL_DIR}/bzImage-${VERSION}
         cp modules-${VERSION}.vhdx ${WSL_KERNEL_DIR}/modules/
         WIN_KERNEL_DIR=$(wslpath  -w ${WSL_KERNEL_DIR} | sed s/\\\\/\\\\\\\\\/g)
