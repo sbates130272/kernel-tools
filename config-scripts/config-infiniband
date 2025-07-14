@@ -1,6 +1,7 @@
 source ${SCRIPT_DIR}/../config-scripts/config-default
 
-./scripts/config -m INFINIBAND
+./scripts/config --module INFINIBAND
 ./scripts/config --enable INFINIBAND_ADDR_TRANS
 ./scripts/config --enable INFINIBAND_USER_ACCESS
-./scripts/config -m RDMA_RXE
+./scripts/config --module INFINIBAND_USER_MAD
+./scripts/config --module RDMA_RXE
