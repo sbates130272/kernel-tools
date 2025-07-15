@@ -20,6 +20,7 @@ KERNEL_DIR=$(pwd)/${KERNEL_DIR}
 GIT_REMOTE_LINUS=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
 GIT_REMOTE_STABLE=https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
 GIT_REMOTE_WSL2=https://github.com/microsoft/WSL2-Linux-Kernel.git
+GIT_REMOTE_NOBLE=git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble
 
 git_check_tag ()
 {
@@ -36,6 +37,7 @@ git_kernel_init ()
     git remote add linus ${GIT_REMOTE_LINUS}
     git remote add stable ${GIT_REMOTE_STABLE}
     git remote add wsl2 ${GIT_REMOTE_WSL2}
+    git remote add ubuntu-noble ${GIT_REMOTE_NOBLE}
 }
 
 git_kernel_update ()
