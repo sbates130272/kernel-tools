@@ -17,11 +17,14 @@ CHECK_OUT=${CHECK_OUT:-no}
 
 KERNEL_DIR=$(pwd)/${KERNEL_DIR}
 
-GIT_REMOTE_LINUS=https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
-GIT_REMOTE_STABLE=https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
-GIT_REMOTE_WSL2=https://github.com/microsoft/WSL2-Linux-Kernel.git
-GIT_REMOTE_NOBLE=git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble
-GIT_REMOTE_LKL=https://github.com/lkl/linux.git
+  # Add new remotes to this associative array.
+
+declare -A remotes
+remotes["linus"]="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
+remotes["stable"]="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
+remotes["wsl2"]="https://github.com/microsoft/WSL2-Linux-Kernel.git"
+remotes["ubuntu-noble"]="git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble"
+remotes["lk-library"]="https://github.com/lkl/linux.git"
 
 git_check_tag ()
 {
@@ -35,11 +38,19 @@ git_kernel_init ()
 {
     cd ${KERNEL_DIR}
     git init
-    git remote add linus ${GIT_REMOTE_LINUS}
-    git remote add stable ${GIT_REMOTE_STABLE}
-    git remote add wsl2 ${GIT_REMOTE_WSL2}
-    git remote add ubuntu-noble ${GIT_REMOTE_NOBLE}
-    git remote add lk-library ${GIT_REMOTE_LKL}
+}
+
+git_kernel_remotes ()
+{
+    cd ${KERNEL_DIR}
+    for key in "${!remotes[@]}"; do
+	if git remote -v | grep -i $key &> /dev/null; then
+	    echo "Found remote $key"
+	else
+	    echo "Remote $key not found, adding"
+	    git remote add $key ${remotes[$key]}
+	fi
+    done
 }
 
 git_kernel_update ()
@@ -67,8 +78,9 @@ git_kernel_update ()
 if [ ! -d "${KERNEL_DIR}" ]; then
     echo "Creating kernel source in ${KERNEL_DIR}..."
     mkdir -p ${KERNEL_DIR}
-    git_kernel_init ${KERNEL_DIR}
+    git_kernel_init
 else
     echo "Kernel source folder (${KERNEL_DIR}) already exists. Updating..."
 fi
-git_kernel_update ${KERNEL_DIR}
+git_kernel_remotes
+git_kernel_update
