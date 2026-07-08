@@ -25,6 +25,7 @@ remotes["stable"]="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.
 remotes["wsl2"]="https://github.com/microsoft/WSL2-Linux-Kernel.git"
 remotes["ubuntu-noble"]="git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble"
 remotes["lk-library"]="https://github.com/lkl/linux.git"
+remotes["amdgpu"]="git@github.com:ROCm/amdgpu.git"
 
 git_check_tag ()
 {

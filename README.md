@@ -31,6 +31,65 @@ kernel git repo with Linus', Greg's and the [Microsoft WSL][ref-wsl]
 kernel source trees. It can also be used to fetch updates from these
 remotes.
 
+### [build-amdgpu-dkms](./scripts/build-amdgpu-dkms)
+
+This [script](./scripts/build-amdgpu-dkms) stages the AMD GPU driver
+source from a local kernel working tree (populated by `init-update`),
+builds it as a DKMS module for a specified kernel version, and
+optionally installs it. It mirrors the layout AMD's own `sources`
+manifest uses for the official `amdgpu-dkms` package — staging only
+the AMD-specific and DRM-core out-of-tree files rather than the full
+kernel tree — so the build works correctly against the host kernel's
+own headers.
+
+Parallelism is maximised via `--jobs=$(nproc)`. If `ccache` is present
+it is injected into the DKMS build automatically. All steps are
+idempotent; `FORCE=yes` re-stages and rebuilds from scratch.
+
+Dependencies: `dkms`, `autoconf`, `automake`, `build-essential`,
+`dwarves` (for BTF), and kernel headers for the target kernel:
+
+```bash
+sudo apt install dkms autoconf automake build-essential dwarves \
+  linux-headers-$(uname -r)
+```
+
+Example — build `therock-7.14` against the Ubuntu Noble generic kernel:
+
+```bash
+KERNEL_VER=6.8.0-136-generic \
+  AMDGPU_REMOTE=amdgpu \
+  AMDGPU_REF=therock-7.14 \
+  INSTALL=no \
+  ./scripts/build-amdgpu-dkms
+```
+
+Example — build with a patch series and install:
+
+```bash
+KERNEL_VER=6.8.0-136-generic \
+  AMDGPU_REF=therock-7.14 \
+  PATCH_DIRS=./patches/my-fixes \
+  ./scripts/build-amdgpu-dkms
+```
+
+To enable BTF symbol generation (opt-in, requires `pahole` and
+`CONFIG_DEBUG_INFO_BTF_MODULES=y` in the target kernel):
+
+```bash
+AMDGPU_BTF=1 KERNEL_VER=6.8.0-136-generic ./scripts/build-amdgpu-dkms
+```
+
+| Variable       | Default      | Description                          |
+| -------------- | ------------ | ------------------------------------ |
+| `KERNEL_VER`   | *(required)* | Target kernel version                |
+| `AMDGPU_REMOTE`| `amdgpu`     | Git remote name in `src/`            |
+| `AMDGPU_REF`   | `master`     | Tag or branch to build               |
+| `PATCH_DIRS`   | *(empty)*    | Colon-separated patch directories    |
+| `INSTALL`      | `yes`        | Set `no` to build without installing |
+| `FORCE`        | `no`         | Set `yes` to re-stage and rebuild    |
+| `KERNEL_DIR`   | `./src`      | Path to kernel working tree          |
+
 ### [build-remote](./scripts/build-remote)
 
 This [script](./scripts/build-remote) can be used to fetch the kernel

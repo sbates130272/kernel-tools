@@ -1,0 +1,273 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2026
+#
+# A script to stage the amdgpu DKMS source from the local kernel working
+# tree (populated by init-update), optionally apply one or more series of
+# numbered patch files, then build and install the DKMS module for a
+# specified kernel version.
+#
+# Parallelism is maximised via --jobs=$(nproc). If ccache is present it is
+# injected into the DKMS build to speed up repeated partial rebuilds.
+# All steps are skipped if already complete; FORCE=yes overrides this.
+#
+# Example calls:
+#
+#   KERNEL_VER=6.8.0-60-generic ./scripts/build-amdgpu-dkms
+#
+#   KERNEL_VER=6.8.0-60-generic \
+#     AMDGPU_REF=roc-7.2.x \
+#     PATCH_DIRS=./patches/rocjitsu \
+#     INSTALL=no \
+#     ./scripts/build-amdgpu-dkms
+#
+
+set -e
+
+KERNEL_DIR=${KERNEL_DIR:-./src}
+AMDGPU_REMOTE=${AMDGPU_REMOTE:-amdgpu}
+AMDGPU_REF=${AMDGPU_REF:-master}
+PATCH_DIRS=${PATCH_DIRS:-}
+INSTALL=${INSTALL:-yes}
+FORCE=${FORCE:-no}
+
+KERNEL_DIR=$(pwd)/${KERNEL_DIR}
+
+check_deps ()
+{
+    if [ -z "${KERNEL_VER}" ]; then
+        echo "Error. KERNEL_VER must be set (e.g. KERNEL_VER=6.8.0-60-generic)."
+        exit -1
+    fi
+    if [ ! -d "/lib/modules/${KERNEL_VER}/build" ]; then
+        echo "Error. Kernel headers not found at /lib/modules/${KERNEL_VER}/build."
+        echo "       Run: sudo apt install linux-headers-${KERNEL_VER}"
+        exit -1
+    fi
+    if ! which dkms &> /dev/null; then
+        echo "Error. dkms is not installed. Run: sudo apt install dkms"
+        exit -1
+    fi
+    if ! which autoconf &> /dev/null || ! which automake &> /dev/null; then
+        echo "Error. autoconf/automake not installed. Run: sudo apt install autoconf automake"
+        exit -1
+    fi
+    if which ccache &> /dev/null; then
+        echo "  INFO: ccache detected, will use for build."
+        USE_CCACHE=yes
+    else
+        USE_CCACHE=no
+    fi
+}
+
+get_amdgpu_version ()
+{
+    cd ${KERNEL_DIR}
+    # Resolve the ref: try it directly first (covers tags and local branches),
+    # then fall back to fetching from the remote (covers remote branches).
+    if git rev-parse --verify --quiet "${AMDGPU_REF}^{commit}" &>/dev/null; then
+        echo "  INFO: Resolved ${AMDGPU_REF} locally, skipping fetch."
+        GIT_REF="${AMDGPU_REF}"
+    else
+        echo "  INFO: Fetching ${AMDGPU_REMOTE}/${AMDGPU_REF}..."
+        git fetch ${AMDGPU_REMOTE} ${AMDGPU_REF}
+        GIT_REF="FETCH_HEAD"
+    fi
+    # The upstream dkms.conf always uses PACKAGE_VERSION="1.0" regardless of
+    # branch. Derive a meaningful version from the ref and short commit hash
+    # so local builds are traceable (e.g. roc-7.2.x-abc1234).
+    SHORT_SHA=$(git rev-parse --short "${GIT_REF}")
+    SAFE_REF=$(echo "${AMDGPU_REF}" | tr '/' '-')
+    AMDGPU_VER="${SAFE_REF}-${SHORT_SHA}"
+    BUILD_SRC=/usr/src/amdgpu-${AMDGPU_VER}
+    echo "  INFO: amdgpu version is ${AMDGPU_VER}, DKMS source path is ${BUILD_SRC}."
+}
+
+stage_source ()
+{
+    if [ -d "${BUILD_SRC}" ] && [ ${FORCE} == "no" ]; then
+        echo "  INFO: Source already staged at ${BUILD_SRC}, skipping."
+        return
+    fi
+    echo "  INFO: Staging amdgpu source to ${BUILD_SRC}..."
+    cd ${KERNEL_DIR}
+
+    sudo rm -rf ${BUILD_SRC}
+    sudo mkdir -p ${BUILD_SRC}
+
+    # Stage exactly what AMD's own 'sources' manifest specifies — no more, no less.
+    # This mirrors how the official amdgpu-dkms .deb is assembled: only AMD-specific
+    # and DRM-core files that amdgpu carries out-of-tree are included. The host
+    # kernel's own linux/, drm/, trace/ headers are used for everything else.
+
+    # Strip drivers/gpu/drm/ (3 components) so the layout at BUILD_SRC is:
+    #   amd/{amdgpu,amdkcl,amdkfd,dkms,...}  ttm/  scheduler/
+    echo "  INFO: Extracting drivers/gpu/drm/amd (this may take a while)..."
+    git archive ${GIT_REF} drivers/gpu/drm/amd \
+        | sudo tar -x --strip-components=3 -C ${BUILD_SRC}
+
+    echo "  INFO: Extracting drivers/gpu/drm/ttm..."
+    git archive ${GIT_REF} drivers/gpu/drm/ttm \
+        | sudo tar -x --strip-components=3 -C ${BUILD_SRC}
+
+    echo "  INFO: Extracting drivers/gpu/drm/scheduler..."
+    git archive ${GIT_REF} drivers/gpu/drm/scheduler \
+        | sudo tar -x --strip-components=3 -C ${BUILD_SRC}
+
+    echo "  INFO: Extracting DRM core files carried out-of-tree..."
+    for f in drm_gem_ttm_helper.c drm_buddy.c drm_exec.c drm_suballoc.c; do
+        git archive ${GIT_REF} drivers/gpu/drm/${f} \
+            | sudo tar -x --strip-components=3 -C ${BUILD_SRC}
+    done
+
+    echo "  INFO: Extracting include/kcl..."
+    sudo mkdir -p ${BUILD_SRC}/include
+    git archive ${GIT_REF} include/kcl \
+        | sudo tar -x --strip-components=1 -C ${BUILD_SRC}/include
+
+    echo "  INFO: Extracting AMD-specific DRM headers..."
+    sudo mkdir -p ${BUILD_SRC}/include/drm
+    git archive ${GIT_REF} include/drm/ttm \
+        | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/include/drm
+    for f in amd_asic_type.h amd_rdma.h spsc_queue.h \
+              drm_buddy.h drm_exec.h drm_gem_ttm_helper.h gpu_scheduler.h; do
+        git archive ${GIT_REF} include/drm/${f} 2>/dev/null \
+            | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/include/drm || true
+    done
+
+    echo "  INFO: Extracting uapi headers..."
+    sudo mkdir -p ${BUILD_SRC}/include/uapi/drm
+    sudo mkdir -p ${BUILD_SRC}/include/uapi/linux
+    git archive ${GIT_REF} include/uapi/drm/amdgpu_drm.h \
+        | sudo tar -x --strip-components=3 -C ${BUILD_SRC}/include/uapi/drm
+    for f in kfd_ioctl.h kfd_sysfs.h; do
+        git archive ${GIT_REF} include/uapi/linux/${f} 2>/dev/null \
+            | sudo tar -x --strip-components=3 -C ${BUILD_SRC}/include/uapi/linux || true
+    done
+
+    echo "  INFO: Extracting dma-resv..."
+    sudo mkdir -p ${BUILD_SRC}/amd/amdkcl/dma-buf
+    git archive ${GIT_REF} drivers/dma-buf/dma-resv.c \
+        | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/amd/amdkcl/dma-buf
+    sudo mkdir -p ${BUILD_SRC}/include/linux
+    git archive ${GIT_REF} include/linux/dma-resv.h \
+        | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/include/linux
+    git archive ${GIT_REF} include/kcl/reservation.h 2>/dev/null \
+        | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/include/linux || true
+
+    echo "  INFO: Setting up Makefile and dkms.conf at source root..."
+    sudo cp ${BUILD_SRC}/amd/dkms/Makefile ${BUILD_SRC}/Makefile
+    sudo ln -sf amd/dkms/dkms.conf ${BUILD_SRC}/dkms.conf
+
+    # Generate configure using the full autotools chain so pre-build.sh can
+    # produce config/config.h with correct per-kernel HAVE_* compat flags.
+    echo "  INFO: Generating configure script..."
+    sudo sh -c "cd ${BUILD_SRC}/amd/dkms && \
+        aclocal -I m4 && \
+        autoheader && \
+        autoconf -o ${BUILD_SRC}/amd/dkms/configure configure.ac"
+
+    # Ubuntu header packages omit generated/rq-offsets.h (built during a full
+    # kernel build). Create an empty stub so sched.h can include it.
+    KBUILD=/lib/modules/${KERNEL_VER}/build
+    if [ ! -f "${KBUILD}/include/generated/rq-offsets.h" ]; then
+        echo "  INFO: Creating rq-offsets.h stub in kernel headers..."
+        sudo touch "${KBUILD}/include/generated/rq-offsets.h"
+    fi
+
+    if [ ${USE_CCACHE} == "yes" ]; then
+        echo "  INFO: Injecting ccache into ${BUILD_SRC}/amd/dkms/dkms.conf."
+        sudo sed -i \
+            's|^\(MAKE\[0\]="[^"]*make \)|\1CC='"'"'ccache gcc'"'"' |' \
+            ${BUILD_SRC}/amd/dkms/dkms.conf
+    fi
+    SOURCE_STAGED=yes
+}
+
+apply_patches ()
+{
+    if [ -z "${PATCH_DIRS}" ]; then
+        return
+    fi
+    if [ "${SOURCE_STAGED}" != "yes" ] && [ ${FORCE} == "no" ]; then
+        echo "  INFO: Source was not re-staged, skipping patch application."
+        return
+    fi
+    IFS=':' read -ra dir_list <<< "${PATCH_DIRS}"
+    for dir in "${dir_list[@]}"; do
+        if [ ! -d "${dir}" ]; then
+            echo "Error. Patch directory '${dir}' does not exist."
+            exit -1
+        fi
+        mapfile -t patches < <(find "${dir}" -maxdepth 1 -name '*.patch' | sort -V)
+        if [ ${#patches[@]} -eq 0 ]; then
+            echo "  INFO: No .patch files found in '${dir}', skipping series."
+            continue
+        fi
+        echo "  INFO: Applying ${#patches[@]} patch(es) from '${dir}'..."
+        for patch_file in "${patches[@]}"; do
+            echo "  INFO: Applying $(basename ${patch_file})..."
+            # Patches use paths relative to the amd/ subtree (e.g. a/amd/amdgpu/...).
+            # BUILD_SRC contains amd/ after --strip-components=3, so -p1 strips
+            # the leading a/ leaving amd/amdgpu/... relative to BUILD_SRC.
+            sudo patch -d ${BUILD_SRC} -p1 --fuzz=3 < "${patch_file}"
+        done
+    done
+}
+
+
+dkms_add ()
+{
+    if sudo dkms status -m amdgpu -v ${AMDGPU_VER} 2>/dev/null | grep -q amdgpu \
+            && [ ${FORCE} == "no" ]; then
+        echo "  INFO: amdgpu ${AMDGPU_VER} already registered with DKMS, skipping add."
+        return
+    fi
+    echo "  INFO: Registering amdgpu ${AMDGPU_VER} with DKMS..."
+    if [ ${FORCE} == "yes" ]; then
+        sudo dkms remove -m amdgpu -v ${AMDGPU_VER} --all 2>/dev/null || true
+    fi
+    sudo dkms add -m amdgpu -v ${AMDGPU_VER}
+}
+
+dkms_build ()
+{
+    if sudo dkms status -m amdgpu -v ${AMDGPU_VER} -k ${KERNEL_VER} 2>/dev/null \
+            | grep -qE 'built|installed' && [ ${FORCE} == "no" ]; then
+        echo "  INFO: amdgpu ${AMDGPU_VER} already built for ${KERNEL_VER}, skipping build."
+        return
+    fi
+    FORCE_FLAG=""
+    if [ ${FORCE} == "yes" ]; then
+        FORCE_FLAG="--force"
+    fi
+    echo "  INFO: Building amdgpu ${AMDGPU_VER} for kernel ${KERNEL_VER} with $(nproc) jobs..."
+    sudo dkms build -m amdgpu -v ${AMDGPU_VER} -k ${KERNEL_VER} \
+        -j $(nproc) ${FORCE_FLAG}
+}
+
+dkms_install ()
+{
+    if sudo dkms status -m amdgpu -v ${AMDGPU_VER} -k ${KERNEL_VER} 2>/dev/null \
+            | grep -q installed && [ ${FORCE} == "no" ]; then
+        echo "  INFO: amdgpu ${AMDGPU_VER} already installed for ${KERNEL_VER}, skipping install."
+        return
+    fi
+    FORCE_FLAG=""
+    if [ ${FORCE} == "yes" ]; then
+        FORCE_FLAG="--force"
+    fi
+    echo "  INFO: Installing amdgpu ${AMDGPU_VER} for kernel ${KERNEL_VER}..."
+    sudo dkms install -m amdgpu -v ${AMDGPU_VER} -k ${KERNEL_VER} ${FORCE_FLAG}
+}
+
+check_deps
+get_amdgpu_version
+stage_source
+apply_patches
+dkms_add
+dkms_build
+if [ ${INSTALL} == "yes" ]; then
+    dkms_install
+fi
+echo "  INFO: amdgpu DKMS ${AMDGPU_VER} complete for kernel ${KERNEL_VER}."

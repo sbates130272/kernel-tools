@@ -7,3 +7,4 @@ debs/
 output-arm64-*
 *.gz
 *.dsc
+amdgpu-build/

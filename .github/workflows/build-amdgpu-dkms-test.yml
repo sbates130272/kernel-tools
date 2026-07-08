@@ -1,0 +1,58 @@
+name: build-amdgpu-dkms-test
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/build-amdgpu-dkms'
+
+jobs:
+  build-amdgpu-dkms-test:
+    name: build-amdgpu-dkms-test
+    runs-on: ubuntu-24.04
+    env:
+      KERNEL_VER: 6.8.0-136-generic
+      AMDGPU_REF: rocm-6.2.4
+      INSTALL: 'no'
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.2.2
+
+      - name: Fix git warning
+        run: git config --global init.defaultBranch main
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            build-essential \
+            dkms \
+            dwarves \
+            linux-headers-${KERNEL_VER}
+
+      - name: Run the init-update script to populate src/
+        run: ./scripts/init-update
+        env:
+          GIT_DEPTH: 1
+          CHECK_OUT: 'no'
+
+      - name: Fetch amdgpu remote
+        run: git fetch amdgpu ${AMDGPU_REF}
+        working-directory: ./src
+
+      - name: Run build-amdgpu-dkms
+        run: ./scripts/build-amdgpu-dkms
+        env:
+          KERNEL_VER: ${{ env.KERNEL_VER }}
+          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          INSTALL: ${{ env.INSTALL }}
+
+      - name: Verify modules were built
+        run: |
+          dkms status | grep amdgpu
+          find /var/lib/dkms/amdgpu -name "*.ko*" | sort
