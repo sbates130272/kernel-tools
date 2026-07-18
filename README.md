@@ -167,7 +167,7 @@ to address other kernels. We plan to address this issue soon!**
 
 ## docker
 
-A Dockerfile exists that can generate the enviromnent needed to run
+A Dockerfile exists that can generate the environment needed to run
 ```build-latest-p2pdma-kernel```. This can make the generation of the
 .deb for this kernel simpler for some users. To generate the kernel
 Debian packages this way proceed as follows from the top-level folder

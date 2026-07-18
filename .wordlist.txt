@@ -29,7 +29,6 @@ dkms
 debian
 debrpm
 dwarves
-enviromnent
 github
 gz
 href
