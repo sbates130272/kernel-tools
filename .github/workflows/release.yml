@@ -1,0 +1,31 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.2.2
+
+      - name: Create release tarballs
+        run: |
+          tar czf "io-uring-dmabuf-patches-${{ github.ref_name }}.tar.gz" patches/io-uring-dmabuf/
+          tar czf "p2pdma-patches-${{ github.ref_name }}.tar.gz" patches/p2pdma/
+          tar czf "useful-configs-${{ github.ref_name }}.tar.gz" useful-configs/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            io-uring-dmabuf-patches-*.tar.gz
+            p2pdma-patches-*.tar.gz
+            useful-configs-*.tar.gz
+          generate_release_notes: true

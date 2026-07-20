@@ -17,26 +17,26 @@ VERBOSE=${VERBOSE:-no}
 
 THISDIR=$(pwd)
 
-if [ $VERBOSE == "yes" ]; then
+if [ "$VERBOSE" == "yes" ]; then
     echo "ARCH=${ARCH}: CROSS_COMPILE={$CROSS_COMPILE}"
     echo "KDIR=${KDIR}"
     echo "DIR=${DIR}"
 fi
 
-cd $DIR/bnxt_en
-if [ $CLEAN == "yes" ];then
+cd "$DIR/bnxt_en" || exit 1
+if [ "$CLEAN" == "yes" ]; then
     make clean
 fi
-make LINUXSRC=${KDIR}
-cp bnxt_en.ko ${THISDIR}
+make LINUXSRC="${KDIR}"
+cp bnxt_en.ko "${THISDIR}"
 
-cd ../bnxt_re
-if [ $CLEAN == "yes" ];then
+cd ../bnxt_re || exit 1
+if [ "$CLEAN" == "yes" ]; then
     make clean
 fi
-make LINUXSRC=${KDIR} \
-     LINUX=${KDIR} \
-     OFA_KERNEL_PATH=${KDIR}
-cp bnxt_re.ko ${THISDIR}
+make LINUXSRC="${KDIR}" \
+     LINUX="${KDIR}" \
+     OFA_KERNEL_PATH="${KDIR}"
+cp bnxt_re.ko "${THISDIR}"
 
-cd $THISDIR
+cd "$THISDIR" || exit 1

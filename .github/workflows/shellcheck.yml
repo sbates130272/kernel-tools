@@ -1,0 +1,30 @@
+name: shellcheck
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.2.2
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+      - name: Run shellcheck on all scripts
+        run: |
+          shellcheck -x \
+            scripts/init-update \
+            scripts/build-amdgpu-dkms \
+            scripts/build-remote \
+            scripts/build-kernel-debrpm \
+            scripts/build-latest-io-uring-dmabuf-kernel \
+            scripts/build-latest-p2pdma-kernel \
+            arch-tools/build-arm64 \
+            arch-tools/build-riscv \
+            arch-tools/bnxt-oot-build \
+            arch-tools/bnxt-drv-fix

@@ -18,10 +18,10 @@ KERNEL=${KERNEL:-$(uname -r)}
 BNXT_EN_DIR=/lib/modules/${KERNEL}/kernel/drivers/net/ethernet/broadcom/bnxt
 BNXT_RE_DIR=/lib/modules/${KERNEL}/kernel/drivers/infiniband/hw/bnxt_re
 
-mkdir -p ${BNXT_EN_DIR}
-mkdir -p ${BNXT_RE_DIR}
+mkdir -p "${BNXT_EN_DIR}"
+mkdir -p "${BNXT_RE_DIR}"
 
-cp ${BNXT_EN} ${BNXT_EN_DIR}/bnxt_en.ko
-cp ${BNXT_RE} ${BNXT_RE_DIR}/bnxt_re.ko
+cp "${BNXT_EN}" "${BNXT_EN_DIR}/bnxt_en.ko"
+cp "${BNXT_RE}" "${BNXT_RE_DIR}/bnxt_re.ko"
 
 depmod

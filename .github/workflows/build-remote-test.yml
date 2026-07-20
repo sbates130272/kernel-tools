@@ -10,6 +10,7 @@ on:
 
 jobs:
   build-remote-test:
+    name: build-remote-test (${{ matrix.mode }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -20,19 +21,23 @@ jobs:
             REMOTE_NAME: localhost
             CONFIG: test-config
             CONFIG_SCRIPT: default
-            WSL_MODE: false
-            NO_INSTALL: false
+            WSL_MODE: 'false'
+            NO_BUILD: 'true'
+            NO_INSTALL: 'true'
             LABEL: -build-remote-localhost-test
+            CONFIG_GREP: CONFIG_BLK_DEV_NVME
           - mode: wsl
             CHECK_OUT: wsl2/linux-msft-wsl-6.6.y
             REMOTE_NAME: none
             CONFIG: none
             CONFIG_SCRIPT: wsl
-            WSL_MODE: true
-            NO_INSTALL: true
+            WSL_MODE: 'true'
+            NO_BUILD: 'true'
+            NO_INSTALL: 'true'
             LABEL: -build-remote-wsl-test
+            CONFIG_GREP: CONFIG_INFINIBAND
     steps:
-    - name: Check out code.
+    - name: Check out code
       uses: actions/checkout@v4.2.2
     - name: Fix git warning
       run: git config --global init.defaultBranch main
@@ -48,23 +53,24 @@ jobs:
           libssl-dev \
           nasm \
           pahole
-    - name: Run the init-update script to obtain kernel (${{matrix.mode}} mode)
+    - name: Run the init-update script to obtain kernel (${{ matrix.mode }} mode)
       run: ./scripts/init-update
       env:
         CHECK_OUT: ${{ matrix.CHECK_OUT }}
         GIT_DEPTH: 1
     - name: Generate a default kernel config file
       run: make defconfig && mv .config test-config
-      working-directory:
-        ./src
-    - name: Run the build-remote script (${{matrix.mode}} mode)
+      working-directory: ./src
+    - name: Run the build-remote script (${{ matrix.mode }} mode)
       run: ../scripts/build-remote
-      working-directory:
-        ./src
+      working-directory: ./src
       env:
         REMOTE_NAME: ${{ matrix.REMOTE_NAME }}
         CONFIG: ${{ matrix.CONFIG }}
         CONFIG_SCRIPT: ${{ matrix.CONFIG_SCRIPT }}
         WSL_MODE: ${{ matrix.WSL_MODE }}
+        NO_BUILD: ${{ matrix.NO_BUILD }}
         NO_INSTALL: ${{ matrix.NO_INSTALL }}
         LABEL: ${{ matrix.LABEL }}
+    - name: Verify config-script fragment was applied (${{ matrix.mode }} mode)
+      run: grep "${{ matrix.CONFIG_GREP }}" src/.config

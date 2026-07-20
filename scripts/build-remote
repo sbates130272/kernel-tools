@@ -59,46 +59,47 @@ WSL_CONFIG=/mnt/c/Users/${WIN_USER}/.wslconfig
 # Get script path
 SCRIPT_DIR=$(cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd)
 
-if [ ${WSL_MODE} == "true" ]; then
+if [ "${WSL_MODE}" == "true" ]; then
     echo "INFO: Executing in WSL mode."
     REMOTE_NAME=localhost
     CONFIG=config-wsl
 else
-    if [ ${REMOTE_NAME} == "none" ]; then
-        echo "Error. You must specify a REMOTE_NAME to ssh into."; exit -1
+    if [ "${REMOTE_NAME}" == "none" ]; then
+        echo "Error. You must specify a REMOTE_NAME to ssh into."; exit 1
     fi
-    if [ ${CONFIG} == "none" ]; then
-        echo "Error. You must specify a CONFIG file."; exit -1
+    if [ "${CONFIG}" == "none" ]; then
+        echo "Error. You must specify a CONFIG file."; exit 1
     fi
 fi
 
 function clean {
     make distclean
+    # shellcheck disable=SC2035
     rm -rf linux-*.tar.gz \
-       *-lsmod \
+       -- *-lsmod \
        config-* \
-       *.vhdx \
+       -- *.vhdx \
        wslconfig-* \
-       ${REMOTE_NAME}-${CONFIG}
+       "${REMOTE_NAME}-${CONFIG}"
 }
 
 function setup {
-    if [ ${WSL_MODE} == "true" ]; then
-        cp ./Microsoft/${CONFIG} ${REMOTE_NAME}-${CONFIG}
-        lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
-    elif [ ${REMOTE_NAME} == "localhost" ]; then
-        if [ ! -f ${CONFIG} ]; then
-            echo "Error: localhost CONFIG (${CONFIG}) does not exist."; exit -1
+    if [ "${WSL_MODE}" == "true" ]; then
+        cp "./Microsoft/${CONFIG}" "${REMOTE_NAME}-${CONFIG}"
+        lsmod > "${REMOTE_NAME}-${CONFIG}-lsmod"
+    elif [ "${REMOTE_NAME}" == "localhost" ]; then
+        if [ ! -f "${CONFIG}" ]; then
+            echo "Error: localhost CONFIG (${CONFIG}) does not exist."; exit 1
         fi
-        cp ${CONFIG} ${REMOTE_NAME}-${CONFIG}
-        lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
+        cp "${CONFIG}" "${REMOTE_NAME}-${CONFIG}"
+        lsmod > "${REMOTE_NAME}-${CONFIG}-lsmod"
     else
-        scp -F ${HOME}/.ssh/config \
-            ${REMOTE_NAME}:/boot/${CONFIG} ${REMOTE_NAME}-${CONFIG}
-        ssh -F ${HOME}/.ssh/config ${REMOTE_NAME} \
-            lsmod > ${REMOTE_NAME}-${CONFIG}-lsmod
+        scp -F "${HOME}/.ssh/config" \
+            "${REMOTE_NAME}:/boot/${CONFIG}" "${REMOTE_NAME}-${CONFIG}"
+        ssh -F "${HOME}/.ssh/config" "${REMOTE_NAME}" \
+            lsmod > "${REMOTE_NAME}-${CONFIG}-lsmod"
     fi
-    cp ${REMOTE_NAME}-${CONFIG} .config
+    cp "${REMOTE_NAME}-${CONFIG}" .config
 
     scripts/config --disable SYSTEM_TRUSTED_KEYRING
     scripts/config --disable SYSTEM_TRUSTED_KEYS
@@ -106,66 +107,70 @@ function setup {
     make olddefconfig
     scripts/config --disable GPIO_BT8XX
     scripts/config --module BLK_DEV_NULL_BLK
-    make LSMOD=${REMOTE_NAME}-${CONFIG}-lsmod localmodconfig
+    make LSMOD="${REMOTE_NAME}-${CONFIG}-lsmod" localmodconfig
     ./scripts/config --enable LOCALVERSION_AUTO
-    ./scripts/config --set-str LOCALVERSION ${LABEL}
+    ./scripts/config --set-str LOCALVERSION "${LABEL}"
 
-    if [ ${CONFIG_SCRIPT} != "none" ]; then
+    if [ "${CONFIG_SCRIPT}" != "none" ]; then
         echo "INFO: Applying the .config mods in config-${CONFIG_SCRIPT}."
-        source ${SCRIPT_DIR}/../config-scripts/config-${CONFIG_SCRIPT}
+        # shellcheck disable=SC1090
+        source "${SCRIPT_DIR}/../config-scripts/config-${CONFIG_SCRIPT}"
     fi
 
     make olddefconfig
 }
 
 function build {
-    if [ ${WSL_MODE} == "true" ]; then
+    if [ "${WSL_MODE}" == "true" ]; then
+        # shellcheck disable=SC2046
         time make -j $(nproc)
         MODULES_PATH=./modules-${VERSION}
-        time INSTALL_MOD_PATH=${MODULES_PATH} make -j $(nproc) \
+        # shellcheck disable=SC2046
+        time INSTALL_MOD_PATH="${MODULES_PATH}" make -j $(nproc) \
              modules_install
     else
+        # shellcheck disable=SC2046
         time make -j $(nproc) targz-pkg
     fi
 }
 
 function install {
-    if [ ${WSL_MODE} == "true" ]; then
+    if [ "${WSL_MODE}" == "true" ]; then
         echo "INSTALL: Installing via WSL_MODE (${VERSION})."
         MODULES_PATH=./modules-${VERSION}
         sudo ./Microsoft/scripts/gen_modules_vhdx.sh \
-             ${MODULES_PATH} \
-             ${VERSION} \
-             modules-${VERSION}.vhdx &> /dev/null
-        sudo chown $(id -u):$(id -g) modules-${VERSION}.vhdx
-        rm -rf ${MODULES_PATH}
-        cp ./arch/${ARCH}/boot/bzImage ${WSL_KERNEL_DIR}/bzImage-${VERSION}
-        cp modules-${VERSION}.vhdx ${WSL_KERNEL_DIR}/modules/
-        WIN_KERNEL_DIR=$(wslpath  -w ${WSL_KERNEL_DIR} | sed s/\\\\/\\\\\\\\\/g)
-        cat <<- EOF > wslconfig-${VERSION}
+             "${MODULES_PATH}" \
+             "${VERSION}" \
+             "modules-${VERSION}.vhdx" &> /dev/null
+        sudo chown "$(id -u):$(id -g)" "modules-${VERSION}.vhdx"
+        rm -rf "${MODULES_PATH}"
+        cp "./arch/${ARCH}/boot/bzImage" "${WSL_KERNEL_DIR}/bzImage-${VERSION}"
+        cp "modules-${VERSION}.vhdx" "${WSL_KERNEL_DIR}/modules/"
+        WIN_KERNEL_DIR=$(wslpath  -w "${WSL_KERNEL_DIR}" | sed 's/\\/\\\\/g')
+        cat <<- EOF > "wslconfig-${VERSION}"
 	[wsl2]
 	kernel=${WIN_KERNEL_DIR}\\\bzImage-${VERSION}
 	kernelModules=${WIN_KERNEL_DIR}\\\modules\\\modules-${VERSION}.vhdx
 	kernelCommandLine=
 	EOF
-        cp ${WSL_CONFIG} ${WSL_CONFIG}.backup
-        cp wslconfig-${VERSION} ${WSL_CONFIG}
-    elif [ ${REMOTE_NAME} == "localhost" ]; then
+        cp "${WSL_CONFIG}" "${WSL_CONFIG}.backup"
+        cp "wslconfig-${VERSION}" "${WSL_CONFIG}"
+    elif [ "${REMOTE_NAME}" == "localhost" ]; then
         echo "INSTALL: Installing with REMOTE=localhost (${VERSION})."
         echo "  INSTALL: In localhost mode do nothing for install (for now)."
     else
         TARBALL=$(ls linux-*.tar.gz)
         echo "INSTALL: Installing ${TARBALL} (${VERSION}) on ${REMOTE_NAME}."
-        scp -F ${HOME}/.ssh/config ${TARBALL} ${REMOTE_NAME}:/tmp/
-        ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        scp -F "${HOME}/.ssh/config" "${TARBALL}" "${REMOTE_NAME}:/tmp/"
+        ssh -F "${HOME}/.ssh/config" -t -t "${REMOTE_NAME}" \
             "sudo tar -C / --exclude=vmlinux-* -xhvf /tmp/${TARBALL}"
-        ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        ssh -F "${HOME}/.ssh/config" -t -t "${REMOTE_NAME}" \
             "sudo update-initramfs -c -k ${VERSION}"
-        ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        ssh -F "${HOME}/.ssh/config" -t -t "${REMOTE_NAME}" \
             "sudo update-grub"
-        ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        ssh -F "${HOME}/.ssh/config" -t -t "${REMOTE_NAME}" \
             "sudo linux-update-symlinks install ${VERSION} /boot/vmlinuz-${VERSION}"
-        ssh -F ${HOME}/.ssh/config -t -t ${REMOTE_NAME} \
+        ssh -F "${HOME}/.ssh/config" -t -t "${REMOTE_NAME}" \
             "sudo reboot now"
     fi
 }
@@ -173,14 +178,15 @@ function install {
 clean
 setup
   # Need to get kernelrelease
+# shellcheck disable=SC2046
 make -j $(nproc) modules_prepare
 VERSION=$(make -s kernelrelease)
-if [ ${NO_BUILD} == "true" ]; then
+if [ "${NO_BUILD}" == "true" ]; then
     echo "INFO. User requested we stop after setup. Exiting."
     exit 0
 fi
 build
-if [ ${NO_INSTALL} == "true" ]; then
+if [ "${NO_INSTALL}" == "true" ]; then
     echo "INFO. User requested we stop before install. Exiting."
     exit 0
 fi
