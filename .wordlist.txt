@@ -3,6 +3,7 @@ AMDGPU
 BTF
 BUF
 Begunkov
+Begunkov's
 CONFIG
 CXX
 CXXFLAGS
@@ -99,5 +100,6 @@ uapi
 ul
 uname
 uring
+uring's
 userspace
 www
