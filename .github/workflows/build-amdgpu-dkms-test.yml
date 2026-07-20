@@ -26,8 +26,8 @@ jobs:
       - name: Detect available kernel headers version
         id: kver
         run: |
-          # rocm-6.2.4 supports kernel 6.x only; restrict search to 6.x headers
-          KVER=$(apt-cache search 'linux-headers-6\.' | grep generic | \
+          # rocm-6.2.4 supports the 6.8.x kernel series on Ubuntu 24.04
+          KVER=$(apt-cache search 'linux-headers-6\.8\.' | grep generic | \
                  sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
           echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
 
