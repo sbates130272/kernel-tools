@@ -1,0 +1,79 @@
+Subject: [PATCH v3 6/10] block: forward create_dmabuf_token to drivers
+From: Pavel Begunkov <asml.silence@gmail.com>
+Date: Wed, 29 Apr 2026 16:25:52 +0100
+Message-Id: <559756c5e22dcfa183080a979de039910d1b896d.1777475843.git.asml.silence@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Add a trivial implementation of the create_dmabuf_token call for
+block devices that forwards the call to a new blk-mq callback if it's
+available.
+
+Signed-off-by: Pavel Begunkov <asml.silence@gmail.com>
+---
+ block/fops.c           | 14 ++++++++++++++
+ include/linux/blk-mq.h |  9 +++++++++
+ 2 files changed, 23 insertions(+)
+
+diff --git a/block/fops.c b/block/fops.c
+index 713a3ba3f457..3d8a48a7d645 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -951,6 +951,19 @@ static int blkdev_mmap_prepare(struct vm_area_desc *desc)
+ 	return generic_file_mmap_prepare(desc);
+ }
+ 
++static int blkdev_create_dmabuf_token(struct file *file,
++				      struct io_dmabuf_token *token)
++{
++	struct request_queue *q = bdev_get_queue(file_bdev(file));
++
++	if (!(file->f_flags & O_DIRECT))
++		return -EINVAL;
++	if (!q->mq_ops || !q->mq_ops->create_dmabuf_token)
++		return -EINVAL;
++
++	return q->mq_ops->create_dmabuf_token(q, token);
++}
++
+ const struct file_operations def_blk_fops = {
+ 	.open		= blkdev_open,
+ 	.release	= blkdev_release,
+@@ -969,6 +982,7 @@ const struct file_operations def_blk_fops = {
+ 	.fallocate	= blkdev_fallocate,
+ 	.uring_cmd	= blkdev_uring_cmd,
+ 	.fop_flags	= FOP_BUFFER_RASYNC,
++	.create_dmabuf_token = blkdev_create_dmabuf_token,
+ };
+ 
+ static __init int blkdev_init(void)
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index 18a2388ba581..ee31fb3ada10 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -15,6 +15,8 @@ struct blk_mq_tags;
+ struct blk_flush_queue;
+ struct io_comp_batch;
+ 
++struct io_dmabuf_token;
++
+ #define BLKDEV_MIN_RQ	4
+ #define BLKDEV_DEFAULT_RQ	128
+ 
+@@ -684,6 +686,13 @@ struct blk_mq_ops {
+ 	 */
+ 	void (*show_rq)(struct seq_file *m, struct request *rq);
+ #endif
++
++	/**
++	 * @create_dma_token: Create a dma token, which will be using to map
++	 * a dmabuf for IO requests.
++	 */
++	int (*create_dmabuf_token)(struct request_queue *,
++				   struct io_dmabuf_token *token);
+ };
+ 
+ /* Keep hctx_flag_name[] in sync with the definitions below */
+-- 
+2.53.0

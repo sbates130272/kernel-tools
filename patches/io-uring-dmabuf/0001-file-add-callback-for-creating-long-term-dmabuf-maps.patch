@@ -1,0 +1,41 @@
+Subject: [PATCH v3 1/10] file: add callback for creating long-term dmabuf
+ maps
+From: Pavel Begunkov <asml.silence@gmail.com>
+Date: Wed, 29 Apr 2026 16:25:47 +0100
+Message-Id: <ae941457cf6cacb9d4c16b6ec904da9ef7fed97f.1777475843.git.asml.silence@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Introduce a new file callback that allows creating long-term dma
+mapping. All necessary information together with a dmabuf will be passed
+in the second argument of type struct io_dmabuf_token, which will be
+defined in following patches.
+
+Signed-off-by: Pavel Begunkov <asml.silence@gmail.com>
+---
+ include/linux/fs.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index b5b01bb22d12..c5558aab4628 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1920,6 +1920,7 @@ struct dir_context {
+ 
+ struct io_uring_cmd;
+ struct offset_ctx;
++struct io_dmabuf_token;
+ 
+ typedef unsigned int __bitwise fop_flags_t;
+ 
+@@ -1967,6 +1968,7 @@ struct file_operations {
+ 	int (*uring_cmd_iopoll)(struct io_uring_cmd *, struct io_comp_batch *,
+ 				unsigned int poll_flags);
+ 	int (*mmap_prepare)(struct vm_area_desc *);
++	int (*create_dmabuf_token)(struct file *, struct io_dmabuf_token *);
+ } __randomize_layout;
+ 
+ /* Supports async buffered reads */
+-- 
+2.53.0
