@@ -17,7 +17,7 @@ jobs:
       GIT_DEPTH: 1
     steps:
     - name: Check out code
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v7.0.1
     - name: Fix git warning
       run: git config --global init.defaultBranch main
     - name: Run the init-update script

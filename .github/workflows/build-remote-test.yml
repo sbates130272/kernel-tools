@@ -38,7 +38,7 @@ jobs:
             CONFIG_GREP: CONFIG_INFINIBAND
     steps:
     - name: Check out code
-      uses: actions/checkout@v4.2.2
+      uses: actions/checkout@v7.0.1
     - name: Fix git warning
       run: git config --global init.defaultBranch main
     - name: Install packages needed to build the linux kernel
