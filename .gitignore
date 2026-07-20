@@ -1,5 +1,8 @@
 *~
-patches/
+# patches/ intentionally tracked
+*.mbx
+*.mbox
+*.cover
 src/
 linux-*/
 configs/

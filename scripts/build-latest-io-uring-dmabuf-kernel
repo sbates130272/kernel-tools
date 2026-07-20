@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2025
+#
+# A helper script to build a kernel with Pavel Begunkov's io_uring DMA-BUF
+# patchset applied, enabling P2P direct I/O from NVMe storage into AMD GPU
+# VRAM without staging through host RAM.
+#
+# The patches in patches/io-uring-dmabuf/ were fetched from lore.kernel.org
+# using b4:
+#
+#   b4 am cover.1777475843.git.asml.silence@gmail.com
+#
+# See patches/io-uring-dmabuf/README for details on refreshing the patches.
+#
+# An example call:
+#
+#   ./scripts/build-latest-io-uring-dmabuf-kernel
+#
+# Override any variable on the command line as needed, e.g.:
+#
+#   REMOTE_BRANCH=v6.15 ./scripts/build-latest-io-uring-dmabuf-kernel
+
+CONFIG=${CONFIG:-./useful-configs/config-x86_64-p2pdma}
+REMOTE_BRANCH=${REMOTE_BRANCH:-v6.14}
+REMOTE=${REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git}
+
+export CONFIG
+export REMOTE_BRANCH
+export REMOTE
+
+PATCH=patches/io-uring-dmabuf \
+    THREADS=128 \
+    ./scripts/build-kernel-debrpm

@@ -1,0 +1,51 @@
+Subject: [PATCH v3 3/10] block: move bvec init into __bio_clone
+From: Pavel Begunkov <asml.silence@gmail.com>
+Date: Wed, 29 Apr 2026 16:25:49 +0100
+Message-Id: <43a91f54d61d3329316e40c69ace781b4d35fe0b.1777475843.git.asml.silence@gmail.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+To quote Cristoph: "Historically __bio_clone itself does not clone the
+payload, just the bio. But we got rid of the callers that want to clone
+a bio but not the payload long time ago". So let's move ->bi_io_vec
+assignment into __bio_clone(), so we have a single point where it's set.
+
+Suggested-by: Christoph Hellwig <hch@lst.de>
+Signed-off-by: Pavel Begunkov <asml.silence@gmail.com>
+---
+ block/bio.c | 5 ++---
+ 1 file changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/block/bio.c b/block/bio.c
+index 4d46af0cd256..0734b50d4992 100644
+--- a/block/bio.c
++++ b/block/bio.c
+@@ -851,6 +851,7 @@ static int __bio_clone(struct bio *bio, struct bio *bio_src, gfp_t gfp)
+ 	bio->bi_write_hint = bio_src->bi_write_hint;
+ 	bio->bi_write_stream = bio_src->bi_write_stream;
+ 	bio->bi_iter = bio_src->bi_iter;
++	bio->bi_io_vec = bio_src->bi_io_vec;
+ 
+ 	if (bio->bi_bdev) {
+ 		if (bio->bi_bdev == bio_src->bi_bdev &&
+@@ -893,8 +894,6 @@ struct bio *bio_alloc_clone(struct block_device *bdev, struct bio *bio_src,
+ 		bio_put(bio);
+ 		return NULL;
+ 	}
+-	bio->bi_io_vec = bio_src->bi_io_vec;
+-
+ 	return bio;
+ }
+ EXPORT_SYMBOL(bio_alloc_clone);
+@@ -914,7 +913,7 @@ int bio_init_clone(struct block_device *bdev, struct bio *bio,
+ {
+ 	int ret;
+ 
+-	bio_init(bio, bdev, bio_src->bi_io_vec, 0, bio_src->bi_opf);
++	bio_init(bio, bdev, NULL, 0, bio_src->bi_opf);
+ 	ret = __bio_clone(bio, bio_src, gfp);
+ 	if (ret)
+ 		bio_uninit(bio);
+-- 
+2.53.0
