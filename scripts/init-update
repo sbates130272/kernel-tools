@@ -29,56 +29,56 @@ remotes["amdgpu"]="https://github.com/ROCm/amdgpu.git"
 
 git_check_tag ()
 {
-    if git branch | grep stable | grep $1; then
-	echo 1
+    if git branch | grep stable | grep "$1"; then
+        echo 1
     fi
     echo 0
 }
 
 git_kernel_init ()
 {
-    cd ${KERNEL_DIR}
+    cd "${KERNEL_DIR}"
     git init
 }
 
 git_kernel_remotes ()
 {
-    cd ${KERNEL_DIR}
+    cd "${KERNEL_DIR}"
     for key in "${!remotes[@]}"; do
-	if git remote -v | grep -i $key &> /dev/null; then
-	    echo "Found remote $key"
-	else
-	    echo "Remote $key not found, adding"
-	    git remote add $key ${remotes[$key]}
-	fi
+        if git remote -v | grep -i "$key" &> /dev/null; then
+            echo "Found remote $key"
+        else
+            echo "Remote $key not found, adding"
+            git remote add "$key" "${remotes[$key]}"
+        fi
     done
 }
 
 git_kernel_update ()
 {
-    cd ${KERNEL_DIR}
-    git fetch --all -j $(nproc) --no-show-forced-updates --depth=${GIT_DEPTH}
+    cd "${KERNEL_DIR}"
+    git fetch --all -j "$(nproc)" --no-show-forced-updates --depth="${GIT_DEPTH}"
     NEWEST_STABLE_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
     echo "  INFO: Newest stable tag detected is ${NEWEST_STABLE_TAG}."
-    if [ ${CHECK_OUT} == "yes" ]; then
-        if [[ $(git_check_tag ${NEWEST_STABLE_TAG}) == "0" ]]; then
+    if [ "${CHECK_OUT}" == "yes" ]; then
+        if [[ $(git_check_tag "${NEWEST_STABLE_TAG}") == "0" ]]; then
             echo "  INFO: Checking out ${NEWEST_STABLE_TAG} locally as stable-${NEWEST_STABLE_TAG}."
-            git checkout -b stable-${NEWEST_STABLE_TAG} ${NEWEST_STABLE_TAG}
+            git checkout -b "stable-${NEWEST_STABLE_TAG}" "${NEWEST_STABLE_TAG}"
         else
             echo "  INFO: Local branch stable-${NEWEST_STABLE_TAG} already exists."
         fi
-    elif [ ${CHECK_OUT} == "no" ]; then
+    elif [ "${CHECK_OUT}" == "no" ]; then
         echo "  INFO: Newest tag is (${NEWEST_STABLE_TAG}) but skipping check out."
     else
         NOW=$(date +%s)
         echo "  INFO: Attempting to checkout remote ${CHECK_OUT} to check-out-${NOW}."
-        git checkout -b check-out-${NOW} ${CHECK_OUT}
+        git checkout -b "check-out-${NOW}" "${CHECK_OUT}"
     fi
 }
 
 if [ ! -d "${KERNEL_DIR}" ]; then
     echo "Creating kernel source in ${KERNEL_DIR}..."
-    mkdir -p ${KERNEL_DIR}
+    mkdir -p "${KERNEL_DIR}"
     git_kernel_init
 else
     echo "Kernel source folder (${KERNEL_DIR}) already exists. Updating..."

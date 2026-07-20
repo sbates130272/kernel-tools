@@ -16,13 +16,15 @@ jobs:
       CHECK_OUT: yes
       GIT_DEPTH: 1
     steps:
-    - name: Check out code.
+    - name: Check out code
       uses: actions/checkout@v4.2.2
     - name: Fix git warning
       run: git config --global init.defaultBranch main
     - name: Run the init-update script
       run: ./scripts/init-update
-    - name: Run the init-update script again
+    - name: Verify src/ is a valid git repo with expected remotes
+      run: git -C src remote -v | grep linus
+    - name: Run the init-update script again (idempotency check)
       run: ./scripts/init-update
     - name: Run the init-update script and do a wsl-based branch
       run: ./scripts/init-update

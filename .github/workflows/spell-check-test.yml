@@ -5,17 +5,13 @@ on:
   pull_request:
     branches:
       - main
-    paths:
-      - '**.md'
-      - '.wordlist.txt'
-      - '.spellcheck.yml'
 
 jobs:
   spell-check-test:
     name: spell-check-test
     runs-on: ubuntu-latest
     steps:
-    - name: Check out code.
+    - name: Check out code
       uses: actions/checkout@v4.2.2
     - name: GitHub Spellcheck Action
       uses: rojopolis/spellcheck-github-actions@0.48.0

@@ -61,7 +61,7 @@ TIME=$(date +"%m%d%Y-%H%M%S")
 
 #if [ ! -x "${CROSSTOOLS}gcc" ]; then
 #   echo "Error: ${CROSSTOOLS} compile tools do not appear to exist."
-#   exit -1
+#   exit 1
 #fi
 
   # Now run the build process. We also copy the .config somewhere safe
@@ -70,30 +70,32 @@ TIME=$(date +"%m%d%Y-%H%M%S")
 export CROSS_COMPILE=${CROSSTOOLS}
 export ARCH=arm64
 
-rm -rf ${MODULEDIR}
-if [ $CLEAN != "no" ]; then
+rm -rf "${MODULEDIR}"
+if [ "$CLEAN" != "no" ]; then
     make clean
 fi
-cp $CONFIG .config
+cp "$CONFIG" .config
 make oldconfig
-cp .config ../.config-$TIME
-make -j $THREADS
-make INSTALL_MOD_PATH=$MODULEDIR modules_install
-make INSTALL_HDR_PATH=$HEADERDIR headers_install
+cp .config "../.config-$TIME"
+make -j "$THREADS"
+make INSTALL_MOD_PATH="$MODULEDIR" modules_install
+make INSTALL_HDR_PATH="$HEADERDIR" headers_install
 
   # Prep the two things we need to move. The Image file and a tarball
   # of the kernel modules.
 
-mkdir -p ${OUTPUTDIR}-${TIME}
-cp .config ${OUTPUTDIR}-${TIME}/.config-$TIME
-cp arch/arm64/boot/Image ${OUTPUTDIR}-${TIME}/Image-$TIME
-cd ${MODULEDIR}/lib/modules
-tar cvfz modules.tar.gz --exclude=modules.tar.gz *
-cd -
-cp ${MODULEDIR}/lib/modules/modules.tar.gz ${OUTPUTDIR}-${TIME}/modules-$TIME.tar.gz
-tar cvfz headers.tar.gz ${HEADERDIR}
-cp headers.tar.gz ${OUTPUTDIR}-${TIME}/headers-$TIME.tar.gz
-rm -rf ${MODULEDIR} ${HEADERDIR}
+mkdir -p "${OUTPUTDIR}-${TIME}"
+cp .config "${OUTPUTDIR}-${TIME}/.config-$TIME"
+cp arch/arm64/boot/Image "${OUTPUTDIR}-${TIME}/Image-$TIME"
+(
+    cd "${MODULEDIR}/lib/modules" || exit 1
+    # shellcheck disable=SC2035
+    tar cvfz modules.tar.gz --exclude=modules.tar.gz *
+)
+cp "${MODULEDIR}/lib/modules/modules.tar.gz" "${OUTPUTDIR}-${TIME}/modules-$TIME.tar.gz"
+tar cvfz headers.tar.gz "${HEADERDIR}"
+cp headers.tar.gz "${OUTPUTDIR}-${TIME}/headers-$TIME.tar.gz"
+rm -rf "${MODULEDIR}" "${HEADERDIR}"
 
 # Ideally we will add the ability to install the kernel we just built
 # on the arm64 machine. For now here are some instructions for the
@@ -120,6 +122,6 @@ rm -rf ${MODULEDIR} ${HEADERDIR}
 #      ln -s build /usr/src/<name of new kernel>
 #      ln -s source /usr/src/<name of new kernel>
 
-if [ $TARGET_HOST != "none" ]; then
+if [ "$TARGET_HOST" != "none" ]; then
     echo "TBD: scp kernel and modules to target host!"
 fi
