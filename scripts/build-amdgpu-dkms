@@ -156,7 +156,7 @@ stage_source ()
         | sudo tar -x --strip-components=2 -C ${BUILD_SRC}/include/linux || true
 
     echo "  INFO: Setting up Makefile and dkms.conf at source root..."
-    sudo cp ${BUILD_SRC}/amd/dkms/Makefile ${BUILD_SRC}/Makefile
+    sudo ln -sf amd/dkms/Makefile ${BUILD_SRC}/Makefile
     sudo ln -sf amd/dkms/dkms.conf ${BUILD_SRC}/dkms.conf
 
     # Generate configure using the full autotools chain so pre-build.sh can
