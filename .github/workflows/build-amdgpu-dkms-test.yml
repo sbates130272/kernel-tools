@@ -26,7 +26,8 @@ jobs:
       - name: Detect available kernel headers version
         id: kver
         run: |
-          KVER=$(apt-cache search 'linux-headers-[0-9]' | grep generic | \
+          # rocm-6.2.4 supports kernel 6.x only; restrict search to 6.x headers
+          KVER=$(apt-cache search 'linux-headers-6\.' | grep generic | \
                  sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
           echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
 
