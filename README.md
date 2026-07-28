@@ -1,5 +1,16 @@
 # kernel-tools: A collection of useful Linux kernel tooling
 
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](README.md)
+[![Spelling](https://github.com/sbates130272/kernel-tools/actions/workflows/spell-check-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/spell-check-test.yml)
+[![ShellCheck](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml)
+[![Userspace Build](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml)
+[![AMDGPU DKMS](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml)
+[![Init Update](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml)
+[![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
+[![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
+[![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-RFC%20v3-orange.svg)](https://lore.kernel.org/io-uring/cover.1777475843.git.asml.silence@gmail.com/)
+
 This repo contains a few scripts I find useful for kernel
 hacking. Feel free to use and abuse these as you see fit.
 
