@@ -146,6 +146,7 @@ rocm
 rpms
 sbates
 scm
+shellcheck
 sig
 sr
 src
@@ -162,4 +163,6 @@ uring
 uring's
 Userspace
 userspace
+svg
 www
+yml
