@@ -1,5 +1,7 @@
 ACS
 AMDGPU
+README
+ShellCheck
 BPF
 BTF
 BUF
@@ -101,6 +103,7 @@ http
 https
 ifindex
 ifname
+img
 init
 insns
 io
@@ -112,9 +115,11 @@ libbpf
 libdrm
 libmnl
 liburing
+lightgrey
 linux
 lt
 mbx
+md
 mellanox
 microsoft
 mlx
