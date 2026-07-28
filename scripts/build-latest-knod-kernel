@@ -1,0 +1,84 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2026
+#
+# A helper script to build a kernel with Taehee Yoo's KNOD (in-kernel network
+# offload device) RFC patchset applied. KNOD enables GPU-accelerated packet
+# processing (XDP offload and IPsec RX) directly from within the kernel, with
+# no userspace GPU runtime such as ROCm or CUDA.
+#
+# The patches in patches/knod/ were fetched from lore.kernel.org using b4:
+#
+#   b4 am 20260719175857.4071636-1-ap420073@gmail.com
+#
+# The patchset targets net-next. Since it is an RFC and has not yet merged,
+# this script clones from the author's development tree which carries the
+# patches on top of a recent net-next base:
+#
+#   https://github.com/TaeheeYoo/knod/tree/knod-7.2
+#
+# See patches/knod/README.md for details on refreshing the patches.
+#
+# Required kernel config options (ensure these are enabled):
+#   CONFIG_NET_KNOD=y
+#   CONFIG_AMD_KFD_KNOD=y
+#   CONFIG_AMDGPU=y
+#   CONFIG_HSA_AMD=y
+#   CONFIG_XDP_SOCKETS=y
+#   CONFIG_BPF_JIT=y
+#   CONFIG_NET_DEVMEM=y         # devmem memory provider (patch 2)
+#   CONFIG_MLX5_CORE=m          # if using Mellanox NIC
+#   CONFIG_BNXT=m               # if using Broadcom NIC
+#
+# An example call:
+#
+#   ./scripts/build-latest-knod-kernel
+#
+# Build from the author's dev tree (patches already included):
+#
+#   USE_DEV_TREE=yes ./scripts/build-latest-knod-kernel
+#
+# Build from net-next with the mbox applied on top:
+#
+#   USE_DEV_TREE=no ./scripts/build-latest-knod-kernel
+#
+# Override any variable on the command line as needed, e.g.:
+#
+#   THREADS=32 ./scripts/build-latest-knod-kernel
+
+CONFIG=${CONFIG:-./useful-configs/config-x86_64-p2pdma}
+
+# USE_DEV_TREE=yes clones the author's knod dev tree (patches already applied).
+# USE_DEV_TREE=no  clones net-next and applies the mbox patch on top.
+USE_DEV_TREE=${USE_DEV_TREE:-yes}
+
+if [ "$USE_DEV_TREE" = "yes" ]; then
+    REMOTE=${REMOTE:-https://github.com/TaeheeYoo/knod}
+    REMOTE_BRANCH=${REMOTE_BRANCH:-knod-7.2}
+    # Patches already applied in the dev tree; nothing extra to apply.
+    export CONFIG REMOTE REMOTE_BRANCH
+    THREADS=128 ./scripts/build-kernel-debrpm
+else
+    # Clone net-next, apply the mbox via git am, then re-point build-kernel-debrpm
+    # at the local patched clone to avoid a second network fetch.
+    UPSTREAM_REMOTE=${UPSTREAM_REMOTE:-git://git.kernel.org/pub/scm/linux/kernel/git/netdev/net-next.git}
+    UPSTREAM_BRANCH=${UPSTREAM_BRANCH:-main}
+    PREPDIR=${PREPDIR:-.knod-prep}
+    MBX="$(pwd)/patches/knod/20260719_ap420073_net_knod_in_kernel_network_offload_device.mbx"
+
+    echo "Cloning ${UPSTREAM_REMOTE} branch ${UPSTREAM_BRANCH}..."
+    git clone --depth 1 "$UPSTREAM_REMOTE" -b "$UPSTREAM_BRANCH" "$PREPDIR"
+
+    echo "Applying KNOD mbox patches via git am..."
+    git -C "$PREPDIR" am --whitespace=fix "$MBX"
+
+    # Point build-kernel-debrpm at the local patched clone; no second fetch.
+    REMOTE="$PREPDIR"
+    REMOTE_BRANCH=$(git -C "$PREPDIR" rev-parse --abbrev-ref HEAD)
+    export CONFIG REMOTE REMOTE_BRANCH
+
+    THREADS=128 ./scripts/build-kernel-debrpm
+    ret=$?
+    rm -rf "$PREPDIR"
+    exit $ret
+fi
