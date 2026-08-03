@@ -21,6 +21,15 @@
 #     INSTALL=no \
 #     ./scripts/build-amdgpu-dkms
 #
+#   KERNEL_VER=6.8.0-1008-aws \
+#     AMDGPU_REF=therock-7.14 \
+#     PATCH_DIRS=./patches/amdgpu-no-large-bar \
+#     INSTALL=no MKDEB=yes \
+#     ./scripts/build-amdgpu-dkms
+#
+# MKDEB=yes produces a kernel-independent source .deb (architecture: all)
+# that ships the staged source tree and rebuilds on the target via DKMS.
+#
 
 set -e
 
@@ -29,9 +38,11 @@ AMDGPU_REMOTE=${AMDGPU_REMOTE:-amdgpu}
 AMDGPU_REF=${AMDGPU_REF:-master}
 PATCH_DIRS=${PATCH_DIRS:-}
 INSTALL=${INSTALL:-yes}
+MKDEB=${MKDEB:-no}
 FORCE=${FORCE:-no}
 
-KERNEL_DIR=$(pwd)/${KERNEL_DIR}
+REPO_ROOT=$(pwd)
+KERNEL_DIR=${REPO_ROOT}/${KERNEL_DIR}
 
 check_deps ()
 {
@@ -50,6 +61,10 @@ check_deps ()
     fi
     if ! which autoconf &> /dev/null || ! which automake &> /dev/null; then
         echo "Error. autoconf/automake not installed. Run: sudo apt install autoconf automake"
+        exit 1
+    fi
+    if [ "${MKDEB}" == "yes" ] && ! which dpkg-deb &> /dev/null; then
+        echo "Error. dpkg-deb not installed. Run: sudo apt install dpkg"
         exit 1
     fi
     if which ccache &> /dev/null; then
@@ -195,6 +210,9 @@ apply_patches ()
     fi
     IFS=':' read -ra dir_list <<< "${PATCH_DIRS}"
     for dir in "${dir_list[@]}"; do
+        # Resolve relative paths against REPO_ROOT so callers can use ./patches/...
+        # regardless of which directory the script cd'd into during staging.
+        [[ "${dir}" != /* ]] && dir="${REPO_ROOT}/${dir}"
         if [ ! -d "${dir}" ]; then
             echo "Error. Patch directory '${dir}' does not exist."
             exit 1
@@ -264,6 +282,66 @@ dkms_install ()
     sudo dkms install -m amdgpu -v "${AMDGPU_VER}" -k "${KERNEL_VER}" ${FORCE_FLAG}
 }
 
+dkms_mkdeb ()
+{
+    local pkg="amdgpu-dkms-${AMDGPU_VER}"
+    local debdir
+    debdir=$(mktemp -d)
+    local srcdir="${debdir}/usr/src/amdgpu-${AMDGPU_VER}"
+    local metadir="${debdir}/DEBIAN"
+
+    echo "  INFO: Building source DKMS .deb for amdgpu ${AMDGPU_VER}..."
+    mkdir -p "${srcdir}" "${metadir}"
+
+    # Ship the staged source tree so DKMS rebuilds on the target kernel.
+    # This mirrors how the official amdgpu-dkms .deb works: architecture
+    # independent, builds against whatever kernel headers are present at
+    # install time via dkms add/build/install in the postinst.
+    if [ ! -d "${BUILD_SRC}" ]; then
+        echo "Error. Staged source not found at ${BUILD_SRC}."
+        echo "       Run without INSTALL=no first, or ensure staging completed."
+        exit 1
+    fi
+    sudo cp -a "${BUILD_SRC}/." "${srcdir}"
+    sudo chown -R root:root "${debdir}"
+
+    # Write the DEBIAN/control file — architecture: all because source is portable.
+    sudo tee "${metadir}/control" > /dev/null <<EOF
+Package: ${pkg}
+Version: 1.0
+Architecture: all
+Maintainer: kernel-tools build
+Depends: dkms (>= 1.95), autoconf, automake
+Description: amdgpu DKMS source (${AMDGPU_VER})
+ Staged amdgpu kernel module source from the therock/ROCm tree,
+ assembled by scripts/build-amdgpu-dkms. Installs via DKMS and
+ builds against the running kernel's headers on the target machine.
+EOF
+
+    # postinst: register and build against the running kernel, then
+    # install. postrm: remove when the package is purged.
+    sudo tee "${metadir}/postinst" > /dev/null <<EOF
+#!/bin/sh
+set -e
+dkms add -m amdgpu -v ${AMDGPU_VER} || true
+dkms build -m amdgpu -v ${AMDGPU_VER} -k \$(uname -r)
+dkms install -m amdgpu -v ${AMDGPU_VER} -k \$(uname -r)
+EOF
+    sudo tee "${metadir}/postrm" > /dev/null <<EOF
+#!/bin/sh
+set -e
+if [ "\$1" = "purge" ]; then
+    dkms remove -m amdgpu -v ${AMDGPU_VER} --all || true
+fi
+EOF
+    sudo chmod 0755 "${metadir}/postinst" "${metadir}/postrm"
+
+    local deb_name="${REPO_ROOT}/${pkg}.deb"
+    sudo dpkg-deb --build --root-owner-group "${debdir}" "${deb_name}"
+    sudo rm -rf "${debdir}"
+    echo "  INFO: .deb written: ${deb_name}"
+}
+
 check_deps
 get_amdgpu_version
 stage_source
@@ -272,5 +350,8 @@ dkms_add
 dkms_build
 if [ "${INSTALL}" == "yes" ]; then
     dkms_install
+fi
+if [ "${MKDEB}" == "yes" ]; then
+    dkms_mkdeb
 fi
 echo "  INFO: amdgpu DKMS ${AMDGPU_VER} complete for kernel ${KERNEL_VER}."

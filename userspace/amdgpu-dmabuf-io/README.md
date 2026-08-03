@@ -6,6 +6,13 @@ using io_uring's DMA-BUF buffer registration, bypassing host RAM entirely.
 This requires a kernel built with Pavel Begunkov's io_uring DMA-BUF patchset
 (see `patches/io-uring-dmabuf/` and `scripts/build-latest-io-uring-dmabuf-kernel`).
 
+On systems **without large BAR (resizable BAR / ReBAR)**, the full VRAM is not
+accessible to other PCIe devices.  Apply `patches/amdgpu-no-large-bar/` to the
+amdgpu DKMS module so that DMA-BUF map operations fall back transparently to GTT
+(system RAM) when large BAR is absent.  The io_uring path then works through
+system RAM rather than directly into VRAM, avoiding an additional CPU copy while
+still not requiring large BAR support.
+
 ## Prerequisites
 
 - Kernel built from `scripts/build-latest-io-uring-dmabuf-kernel` installed and running
@@ -48,3 +55,8 @@ number of bytes transferred directly into GPU VRAM.
 - P2PDMA requires that the GPU and NVMe device are on the same PCIe root
   complex, or that ACS is disabled (see `patches/p2pdma/` for the acs_disable
   patch used with the p2pdma patchset).
+- On systems without large BAR, the first DMA-BUF map will evict the VRAM BO to
+  GTT; the kernel logs a `dev_warn_ratelimited` message for this.  Subsequent
+  operations on the same BO (already in GTT) proceed silently.  To avoid the
+  eviction entirely, set `AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR` when
+  creating the GEM BO (requires `patches/amdgpu-no-large-bar/` applied).

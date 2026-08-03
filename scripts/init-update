@@ -14,6 +14,7 @@ set -e
 KERNEL_DIR=${KERNEL_DIR:-./src}
 GIT_DEPTH=${GIT_DEPTH:-1}
 CHECK_OUT=${CHECK_OUT:-no}
+SKIP_LAUNCHPAD=${SKIP_LAUNCHPAD:-no}
 
 KERNEL_DIR=$(pwd)/${KERNEL_DIR}
 
@@ -23,9 +24,11 @@ declare -A remotes
 remotes["linus"]="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
 remotes["stable"]="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
 remotes["wsl2"]="https://github.com/microsoft/WSL2-Linux-Kernel.git"
-remotes["ubuntu-noble"]="git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble"
 remotes["lk-library"]="https://github.com/lkl/linux.git"
 remotes["amdgpu"]="https://github.com/ROCm/amdgpu.git"
+if [ "${SKIP_LAUNCHPAD}" != "yes" ]; then
+    remotes["ubuntu-noble"]="git://git.launchpad.net/~ubuntu-kernel/ubuntu/+source/linux/+git/noble"
+fi
 
 git_check_tag ()
 {
@@ -57,7 +60,11 @@ git_kernel_remotes ()
 git_kernel_update ()
 {
     cd "${KERNEL_DIR}"
-    git fetch --all -j "$(nproc)" --no-show-forced-updates --depth="${GIT_DEPTH}"
+    for key in "${!remotes[@]}"; do
+        echo "Fetching $key"
+        git fetch "$key" --no-show-forced-updates --depth="${GIT_DEPTH}" --filter=blob:none || \
+            echo "  WARNING: Failed to fetch $key, skipping."
+    done
     NEWEST_STABLE_TAG=$(git tag -l 'v*' --sort 'v:refname' | grep -v rc | tail -n 1)
     echo "  INFO: Newest stable tag detected is ${NEWEST_STABLE_TAG}."
     if [ "${CHECK_OUT}" == "yes" ]; then

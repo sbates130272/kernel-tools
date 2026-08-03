@@ -1,0 +1,73 @@
+ amd/amdgpu/amdgpu_dma_buf.c | 0 +
+ 1 file changed, 0 insertions(+)
+
+--- a/amd/amdgpu/amdgpu_dma_buf.c
++++ b/amd/amdgpu/amdgpu_dma_buf.c
+@@ -37,6 +37,7 @@
+ #include "amdgpu_dma_buf.h"
+ #include "amdgpu_xgmi.h"
+ #include "amdgpu_vm.h"
++#include "amdgpu_object.h"
+ #include "amdgpu_ttm.h"
+ #include <drm/amdgpu_drm.h>
+ #include <drm/ttm/ttm_tt.h>
+@@ -92,6 +93,29 @@
+ }
+ #endif
+ 
++/**
++ * amdgpu_dma_buf_evict_to_gtt - evict a VRAM BO to GTT for DMA-BUF P2P
++ * @bo: amdgpu buffer object (reservation lock must be held by caller)
++ *
++ * On systems without large BAR the VRAM aperture is smaller than real VRAM.
++ * An importer (e.g. the NVMe driver via io_uring DMA-BUF) may be unable to
++ * DMA to VRAM addresses outside the aperture window.  Evict the BO to GTT
++ * so the importer receives system-RAM-backed DMA addresses it can always reach.
++ *
++ * Returns 0 on success, -EBUSY if the BO is pinned and cannot be moved, or a
++ * negative error code from ttm_bo_validate().
++ */
++static int amdgpu_dma_buf_evict_to_gtt(struct amdgpu_bo *bo)
++{
++	struct ttm_operation_ctx ctx = { false, false };
++
++	if (bo->tbo.pin_count)
++		return -EBUSY;
++
++	amdgpu_bo_placement_from_domain(bo, AMDGPU_GEM_DOMAIN_GTT);
++	return ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
++}
++
+ #if defined(HAVE_DMA_BUF_OPS_LEGACY)
+ static int
+ __dma_resv_make_exclusive(struct dma_resv *obj)
+@@ -408,6 +432,29 @@
+ 		break;
+ 
+ 	case TTM_PL_VRAM:
++		/*
++		 * On no-large-BAR systems the VRAM aperture is smaller than the
++		 * total VRAM.  The importer's DMA engine cannot reach VRAM
++		 * addresses outside the aperture, so evict the BO to GTT first
++		 * and fall through to the TTM_PL_TT path.
++		 */
++		if (adev->gmc.real_vram_size > adev->gmc.visible_vram_size) {
++			dev_warn_ratelimited(adev->dev,
++				"amdgpu: no large BAR — evicting BO to GTT for DMA-BUF P2P\n");
++			r = amdgpu_dma_buf_evict_to_gtt(bo);
++			if (r)
++				return ERR_PTR(r);
++			/* BO is now in GTT; rebuild sgt via the TT path */
++			sgt = drm_prime_pages_to_sg(obj->dev,
++						    bo->tbo.ttm->pages,
++						    bo->tbo.ttm->num_pages);
++			if (IS_ERR(sgt))
++				return sgt;
++			if (dma_map_sgtable(attach->dev, sgt, dir,
++					    DMA_ATTR_SKIP_CPU_SYNC))
++				goto error_free;
++			break;
++		}
+ 		r = amdgpu_vram_mgr_alloc_sgt(adev, bo->tbo.resource, 0,
+ 					      bo->tbo.base.size, attach->dev,
+ 					      dir, &sgt);

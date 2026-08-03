@@ -6,10 +6,12 @@
 [![ShellCheck](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml)
 [![Userspace Build](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml)
 [![AMDGPU DKMS](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml)
+[![AMDGPU DKMS Matrix](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml)
 [![Init Update](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml)
 [![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
 [![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
 [![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-RFC%20v3-orange.svg)](https://lore.kernel.org/io-uring/cover.1777475843.git.asml.silence@gmail.com/)
+[![amdgpu no-large-BAR](https://img.shields.io/badge/amdgpu-no--large--BAR-blue.svg)](patches/amdgpu-no-large-bar/README.md)
 
 This repo contains a few scripts I find useful for kernel
 hacking. Feel free to use and abuse these as you see fit.
@@ -84,6 +86,21 @@ KERNEL_VER=6.8.0-136-generic \
   ./scripts/build-amdgpu-dkms
 ```
 
+Example — build with the no-large-BAR hipfile patches and produce a
+kernel-independent DKMS `.deb` for deployment to a G4an EC2 instance
+(build against `6.8.0-1008-aws` headers locally to smoke-test, then
+`dpkg -i` on the target):
+
+```bash
+sudo apt install linux-headers-6.8.0-1008-aws
+KERNEL_VER=6.8.0-1008-aws \
+  AMDGPU_REF=therock-7.14 \
+  PATCH_DIRS=./patches/amdgpu-no-large-bar \
+  INSTALL=no MKDEB=yes \
+  ./scripts/build-amdgpu-dkms
+# Produces: amdgpu-dkms-therock-7.14-<sha>.deb  (Architecture: all)
+```
+
 To enable BTF symbol generation (opt-in, requires `pahole` and
 `CONFIG_DEBUG_INFO_BTF_MODULES=y` in the target kernel):
 
@@ -91,15 +108,16 @@ To enable BTF symbol generation (opt-in, requires `pahole` and
 AMDGPU_BTF=1 KERNEL_VER=6.8.0-136-generic ./scripts/build-amdgpu-dkms
 ```
 
-| Variable       | Default      | Description                          |
-| -------------- | ------------ | ------------------------------------ |
-| `KERNEL_VER`   | *(required)* | Target kernel version                |
-| `AMDGPU_REMOTE`| `amdgpu`     | Git remote name in `src/`            |
-| `AMDGPU_REF`   | `master`     | Tag or branch to build               |
-| `PATCH_DIRS`   | *(empty)*    | Colon-separated patch directories    |
-| `INSTALL`      | `yes`        | Set `no` to build without installing |
-| `FORCE`        | `no`         | Set `yes` to re-stage and rebuild    |
-| `KERNEL_DIR`   | `./src`      | Path to kernel working tree          |
+| Variable        | Default      | Description                                             |
+| --------------- | ------------ | ------------------------------------------------------- |
+| `KERNEL_VER`    | *(required)* | Target kernel version (used to smoke-test the build)    |
+| `AMDGPU_REMOTE` | `amdgpu`     | Git remote name in `src/`                               |
+| `AMDGPU_REF`    | `master`     | Tag or branch to build                                  |
+| `PATCH_DIRS`    | *(empty)*    | Colon-separated patch directories                       |
+| `INSTALL`       | `yes`        | Set `no` to build without installing locally            |
+| `MKDEB`         | `no`         | Set `yes` to produce a kernel-independent source `.deb` |
+| `FORCE`         | `no`         | Set `yes` to re-stage and rebuild                       |
+| `KERNEL_DIR`    | `./src`      | Path to kernel working tree                             |
 
 ### [build-remote](./scripts/build-remote)
 

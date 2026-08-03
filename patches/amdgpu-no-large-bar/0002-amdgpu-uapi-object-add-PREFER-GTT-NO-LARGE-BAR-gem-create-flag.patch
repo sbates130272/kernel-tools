@@ -1,0 +1,72 @@
+From: Stephen Bates <sbates@raithlin.com>
+Date: Sun, 03 Aug 2026 00:00:00 +0000
+Subject: [PATCH 2/2] amdgpu/uapi,object: add PREFER_GTT_NO_LARGE_BAR GEM create flag
+
+Patch 1 added a lazy eviction path in amdgpu_dma_buf_map() so that a
+VRAM BO is automatically moved to GTT when the GPU lacks large BAR and
+an importer tries to DMA-map it.  That eviction happens at the point the
+DMA-BUF is first mapped by an NVMe (or similar) device — meaning the BO
+has already been allocated in VRAM and must be copied to GTT before the
+first transfer can begin.  On busy systems this serializes the very first
+transfer and briefly doubles the memory footprint.
+
+Introduce AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR (bit 17 of the GEM
+create flags) to let callers declare upfront that a BO will be used for
+DMA-BUF P2P I/O on a system that may lack resizable BAR.  When the flag
+is set and visible_vram_size < real_vram_size, amdgpu_bo_placement_from_
+domain() redirects the effective placement from VRAM to GTT before the
+placement-building loop runs.  The BO is therefore allocated in GTT from
+the outset; no eviction is needed at DMA-BUF map_attachment time.
+
+On large-BAR systems (visible_vram_size == real_vram_size) the flag is
+silently ignored and the normal VRAM placement policy applies.
+
+Intended users:
+  * The ROCm / HIP runtime, which can set this flag when allocating device
+    memory buffers the application will use as io_uring DMA-BUF targets
+    (the "hipfile" use-case).
+  * Direct users of the amdgpu GEM ioctls, such as the test program in
+    userspace/amdgpu-dmabuf-io/, that want deterministic up-front placement
+    rather than relying on the lazy eviction fallback introduced by patch 1.
+
+Bit 17 is chosen to avoid collisions with current upstream flags (bits
+0-16, noting that GFX12_DCC occupies bit 16).
+
+Signed-off-by: Stephen Bates <sbates@raithlin.com>
+---
+--- a/amd/amdgpu/amdgpu_object.c
++++ b/amd/amdgpu/amdgpu_object.c
+@@ -115,6 +115,17 @@
+ 	u64 flags = abo->flags;
+ 	u32 c = 0, i;
+ 
++	/*
++	 * On no-large-BAR systems redirect upfront VRAM allocations to GTT when
++	 * the caller sets PREFER_GTT_NO_LARGE_BAR.  This avoids the eviction
++	 * overhead in amdgpu_dma_buf_map() for callers that know their BO will
++	 * be used as an io_uring DMA-BUF P2P target.
++	 */
++	if ((flags & AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR) &&
++	    adev->gmc.real_vram_size > adev->gmc.visible_vram_size &&
++	    (domain & AMDGPU_GEM_DOMAIN_VRAM))
++		domain = (domain & ~AMDGPU_GEM_DOMAIN_VRAM) | AMDGPU_GEM_DOMAIN_GTT;
++
+ 	if (domain & AMDGPU_GEM_DOMAIN_VRAM) {
+ 		unsigned int visible_pfn = adev->gmc.visible_vram_size >> PAGE_SHIFT;
+ 		int8_t mem_id = KFD_XCP_MEM_ID(adev, abo->xcp_id);
+--- a/include/uapi/drm/amdgpu_drm.h
++++ b/include/uapi/drm/amdgpu_drm.h
+@@ -189,6 +189,13 @@
+ #define AMDGPU_GEM_CREATE_EXT_COHERENT		(1 << 15)
+ /* Set PTE.D and recompress during GTT->VRAM moves according to TILING flags. */
+ #define AMDGPU_GEM_CREATE_GFX12_DCC		(1 << 16)
++/*
++ * Prefer GTT placement on systems without resizable BAR (large BAR / ReBAR).
++ * When set and visible_vram_size < real_vram_size, amdgpu allocates the BO in
++ * GTT rather than VRAM so it is always reachable by peer DMA devices (e.g.
++ * NVMe via io_uring DMA-BUF).  Silently ignored on large-BAR systems.
++ */
++#define AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR	(1 << 17)
+ 
+ /* hybrid specific */
+ /* Flag that the memory should be in SPARSE resource */
