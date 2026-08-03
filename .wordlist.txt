@@ -1,5 +1,8 @@
 ACS
 AMDGPU
+DCC
+GFX
+GFX12
 README
 ShellCheck
 BAR
@@ -37,10 +40,12 @@ ISA
 JIT
 KNOD
 KNOD's
+MKDEB
 Mellanox
 NIC
 NNNN
 NVMe
+NVMe's
 P2P
 P2PDMA
 PCIe
@@ -73,9 +78,11 @@ aarch
 acs
 accel
 alloc
+adev
 amd
 ap
 amdgpu
+aws
 amdkfd
 asml
 atomics
@@ -84,6 +91,7 @@ automake
 bnxt
 bo
 bpf
+buf
 ccache
 cd
 config
@@ -98,7 +106,9 @@ dev
 devmem
 disassembler
 dkms
+dma
 dnf
+dpkg
 dri
 drm
 dmabuf
@@ -108,6 +118,9 @@ eth
 fd
 github
 gmail
+glxinfo
+gmc
+gtt
 gz
 hardcoded
 hipcc
@@ -132,6 +145,7 @@ libmnl
 liburing
 lightgrey
 linux
+lspci
 lt
 mbx
 md
@@ -155,6 +169,8 @@ pre
 ptr
 regbuf
 repo
+ratelimited
+resizable
 riscv
 selftests
 rocm
@@ -162,6 +178,8 @@ rpms
 sbates
 scm
 serializes
+sha
+sys
 shellcheck
 sig
 sr
@@ -169,6 +187,7 @@ src
 struct
 sudo
 therock
+ttm
 uapi
 ul
 XDP
@@ -180,5 +199,6 @@ uring's
 Userspace
 userspace
 svg
+vram
 www
 yml

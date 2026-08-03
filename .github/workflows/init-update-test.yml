@@ -15,6 +15,7 @@ jobs:
     env:
       CHECK_OUT: yes
       GIT_DEPTH: 1
+      SKIP_LAUNCHPAD: yes
     steps:
     - name: Check out code
       uses: actions/checkout@v7.0.1

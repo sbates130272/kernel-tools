@@ -8,6 +8,7 @@ linux-*/
 configs/
 debs/
 output-arm64-*
+*.deb
 *.gz
 *.dsc
 amdgpu-build/

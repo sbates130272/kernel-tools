@@ -20,6 +20,7 @@ jobs:
           tar czf "io-uring-dmabuf-patches-${{ github.ref_name }}.tar.gz" patches/io-uring-dmabuf/
           tar czf "knod-patches-${{ github.ref_name }}.tar.gz" patches/knod/
           tar czf "p2pdma-patches-${{ github.ref_name }}.tar.gz" patches/p2pdma/
+          tar czf "amdgpu-no-large-bar-patches-${{ github.ref_name }}.tar.gz" patches/amdgpu-no-large-bar/
           tar czf "useful-configs-${{ github.ref_name }}.tar.gz" useful-configs/
 
       - name: Create GitHub Release
@@ -29,5 +30,6 @@ jobs:
             io-uring-dmabuf-patches-*.tar.gz
             knod-patches-*.tar.gz
             p2pdma-patches-*.tar.gz
+            amdgpu-no-large-bar-patches-*.tar.gz
             useful-configs-*.tar.gz
           generate_release_notes: true

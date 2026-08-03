@@ -10,7 +10,7 @@ has already been allocated in VRAM and must be copied to GTT before the
 first transfer can begin.  On busy systems this serializes the very first
 transfer and briefly doubles the memory footprint.
 
-Introduce AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR (bit 16 of the GEM
+Introduce AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR (bit 17 of the GEM
 create flags) to let callers declare upfront that a BO will be used for
 DMA-BUF P2P I/O on a system that may lack resizable BAR.  When the flag
 is set and visible_vram_size < real_vram_size, amdgpu_bo_placement_from_
@@ -29,72 +29,44 @@ Intended users:
     userspace/amdgpu-dmabuf-io/, that want deterministic up-front placement
     rather than relying on the lazy eviction fallback introduced by patch 1.
 
-Bit 16 is chosen to avoid collisions with current upstream flags (bits
-0-11) and typical out-of-tree additions.
+Bit 17 is chosen to avoid collisions with current upstream flags (bits
+0-16, noting that GFX12_DCC occupies bit 16).
 
 Signed-off-by: Stephen Bates <sbates@raithlin.com>
 ---
- amd/amdgpu/amdgpu_object.c    | 20 ++++++++++++++++++++
- include/uapi/drm/amdgpu_drm.h | 17 +++++++++++++++++
- 2 files changed, 37 insertions(+)
-
-diff --git a/include/uapi/drm/amdgpu_drm.h b/include/uapi/drm/amdgpu_drm.h
-index 0000000..0000000 100644
---- a/include/uapi/drm/amdgpu_drm.h
-+++ b/include/uapi/drm/amdgpu_drm.h
-@@ -168,6 +168,23 @@
-  */
- #define AMDGPU_GEM_CREATE_GFX12_DCC			(1 << 11)
- 
-+/**
-+ * AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR - prefer GTT placement on
-+ * systems without resizable BAR (large BAR / ReBAR).
-+ *
-+ * On GPUs without resizable BAR only a portion of VRAM is exposed through
-+ * the PCIe aperture.  Buffers intended for DMA-BUF peer-to-peer I/O (e.g.
-+ * the io_uring hipfile path with NVMe) must reside in a region reachable by
-+ * the importer's DMA engine.
-+ *
-+ * When this flag is set and visible_vram_size < real_vram_size, the driver
-+ * places the BO in GTT instead of VRAM, avoiding an eviction at DMA-BUF
-+ * map_attachment time.  On large-BAR systems the flag has no effect and the
-+ * normal VRAM placement policy is used.
-+ *
-+ * Bit 16 is chosen to avoid collisions with existing upstream flags (0-11)
-+ * and typical out-of-tree additions.
-+ */
-+#define AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR	(1 << 16)
-+
- /* va regions */
- #define AMDGPU_VA_RANGE_32_BIT			0x1
- #define AMDGPU_VA_RANGE_HIGH			0x2
-diff --git a/amd/amdgpu/amdgpu_object.c b/amd/amdgpu/amdgpu_object.c
-index 0000000..0000000 100644
 --- a/amd/amdgpu/amdgpu_object.c
 +++ b/amd/amdgpu/amdgpu_object.c
-@@ -138,6 +138,26 @@
- void amdgpu_bo_placement_from_domain(struct amdgpu_bo *abo, u32 domain)
- {
- 	struct amdgpu_device *adev = amdgpu_ttm_adev(abo->tbo.bdev);
- 	struct ttm_placement *placement = &abo->placement;
- 	struct ttm_place *places = abo->placements;
- 	u32 c = 0;
+@@ -115,6 +115,17 @@
+ 	u64 flags = abo->flags;
+ 	u32 c = 0, i;
  
 +	/*
-+	 * AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR: when the caller has
-+	 * flagged this BO as a DMA-BUF P2P candidate and the GPU lacks large
-+	 * BAR (visible VRAM < real VRAM), redirect the placement from VRAM to
-+	 * GTT so the BO lands in system RAM from the outset.  No eviction is
-+	 * then required when an importer calls dma_buf_map_attachment().
-+	 *
-+	 * On large-BAR systems real_vram_size == visible_vram_size so this
-+	 * condition is never true and the flag has no effect.
++	 * On no-large-BAR systems redirect upfront VRAM allocations to GTT when
++	 * the caller sets PREFER_GTT_NO_LARGE_BAR.  This avoids the eviction
++	 * overhead in amdgpu_dma_buf_map() for callers that know their BO will
++	 * be used as an io_uring DMA-BUF P2P target.
 +	 */
-+	if ((abo->flags & AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR) &&
-+	    (domain & AMDGPU_GEM_DOMAIN_VRAM) &&
-+	    adev->gmc.real_vram_size > adev->gmc.visible_vram_size) {
-+		domain &= ~AMDGPU_GEM_DOMAIN_VRAM;
-+		domain |=  AMDGPU_GEM_DOMAIN_GTT;
-+	}
++	if ((flags & AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR) &&
++	    adev->gmc.real_vram_size > adev->gmc.visible_vram_size &&
++	    (domain & AMDGPU_GEM_DOMAIN_VRAM))
++		domain = (domain & ~AMDGPU_GEM_DOMAIN_VRAM) | AMDGPU_GEM_DOMAIN_GTT;
 +
  	if (domain & AMDGPU_GEM_DOMAIN_VRAM) {
+ 		unsigned int visible_pfn = adev->gmc.visible_vram_size >> PAGE_SHIFT;
+ 		int8_t mem_id = KFD_XCP_MEM_ID(adev, abo->xcp_id);
+--- a/include/uapi/drm/amdgpu_drm.h
++++ b/include/uapi/drm/amdgpu_drm.h
+@@ -189,6 +189,13 @@
+ #define AMDGPU_GEM_CREATE_EXT_COHERENT		(1 << 15)
+ /* Set PTE.D and recompress during GTT->VRAM moves according to TILING flags. */
+ #define AMDGPU_GEM_CREATE_GFX12_DCC		(1 << 16)
++/*
++ * Prefer GTT placement on systems without resizable BAR (large BAR / ReBAR).
++ * When set and visible_vram_size < real_vram_size, amdgpu allocates the BO in
++ * GTT rather than VRAM so it is always reachable by peer DMA devices (e.g.
++ * NVMe via io_uring DMA-BUF).  Silently ignored on large-BAR systems.
++ */
++#define AMDGPU_GEM_CREATE_PREFER_GTT_NO_LARGE_BAR	(1 << 17)
+ 
+ /* hybrid specific */
+ /* Flag that the memory should be in SPARSE resource */

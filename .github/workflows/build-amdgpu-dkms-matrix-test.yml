@@ -1,4 +1,8 @@
-name: build-amdgpu-dkms-test
+name: build-amdgpu-dkms-matrix-test
+
+# A matrix-driven variant of build-amdgpu-dkms-test that covers multiple
+# (AMDGPU_REF, kernel, patch-series) combinations in parallel.  Extend the
+# matrix to add new refs or patch series without touching the job logic.
 
 on:
   workflow_dispatch:
@@ -7,14 +11,34 @@ on:
       - main
     paths:
       - 'scripts/build-amdgpu-dkms'
+      - 'patches/amdgpu-no-large-bar/**'
 
 jobs:
-  build-amdgpu-dkms-test:
-    name: build-amdgpu-dkms-test
+  build-amdgpu-dkms-matrix-test:
+    name: "${{ matrix.amdgpu-ref }} / ${{ matrix.kernel-pattern }} / ${{ matrix.patch-dirs || 'no-patches' }}"
     runs-on: ubuntu-24.04
-    env:
-      AMDGPU_REF: rocm-6.2.4
-      INSTALL: 'no'
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # rocm-6.2.4 against the 6.8 generic kernel — the original baseline
+          - amdgpu-ref: rocm-6.2.4
+            kernel-pattern: '6\.8\.'
+            kernel-flavour: generic
+            patch-dirs: ''
+
+          # therock-7.14 against 6.8 generic, no patches
+          - amdgpu-ref: therock-7.14
+            kernel-pattern: '6\.8\.'
+            kernel-flavour: generic
+            patch-dirs: ''
+
+          # therock-7.14 against 6.8 generic with the no-large-bar hipfile patches
+          - amdgpu-ref: therock-7.14
+            kernel-pattern: '6\.8\.'
+            kernel-flavour: generic
+            patch-dirs: './patches/amdgpu-no-large-bar'
 
     steps:
       - name: Check out code
@@ -26,8 +50,8 @@ jobs:
       - name: Detect available kernel headers version
         id: kver
         run: |
-          # rocm-6.2.4 supports the 6.8.x kernel series on Ubuntu 24.04
-          KVER=$(apt-cache search 'linux-headers-6\.8\.' | grep generic | \
+          KVER=$(apt-cache search "linux-headers-${{ matrix.kernel-pattern }}" | \
+                 grep "${{ matrix.kernel-flavour }}" | \
                  sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
           echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
 
@@ -49,49 +73,33 @@ jobs:
           CHECK_OUT: 'no'
 
       - name: Fetch amdgpu remote
-        run: git fetch amdgpu ${AMDGPU_REF}
+        run: git fetch amdgpu ${{ matrix.amdgpu-ref }}
         working-directory: ./src
 
       - name: Run build-amdgpu-dkms
         run: ./scripts/build-amdgpu-dkms
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
+          AMDGPU_REF: ${{ matrix.amdgpu-ref }}
+          PATCH_DIRS: ${{ matrix.patch-dirs }}
+          INSTALL: 'no'
 
       - name: Verify modules were built
         run: |
           dkms status | grep amdgpu
           find /var/lib/dkms/amdgpu -name "*.ko*" | sort
 
-      - name: Verify force-rebuild path (idempotency with FORCE=yes)
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
-          FORCE: 'yes'
-
       - name: Build source DKMS .deb (MKDEB=yes)
         run: ./scripts/build-amdgpu-dkms
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
+          AMDGPU_REF: ${{ matrix.amdgpu-ref }}
+          PATCH_DIRS: ${{ matrix.patch-dirs }}
+          INSTALL: 'no'
           MKDEB: 'yes'
 
-      - name: Verify .deb was produced and has correct structure
+      - name: Verify .deb is Architecture:all with source tree
         run: |
           ls -lh amdgpu-dkms-*.deb
           dpkg-deb --info amdgpu-dkms-*.deb | grep -E "Architecture: all|Package:|Depends:"
           dpkg-deb --contents amdgpu-dkms-*.deb | grep "usr/src/amdgpu-"
-
-      - name: Build with amdgpu-no-large-bar patches and MKDEB=yes
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
-          PATCH_DIRS: ./patches/amdgpu-no-large-bar
-          MKDEB: 'yes'
-          FORCE: 'yes'

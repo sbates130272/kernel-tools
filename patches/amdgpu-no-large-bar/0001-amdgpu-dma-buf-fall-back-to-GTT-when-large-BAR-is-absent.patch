@@ -1,156 +1,73 @@
-From: Stephen Bates <sbates@raithlin.com>
-Date: Sun, 03 Aug 2026 00:00:00 +0000
-Subject: [PATCH 1/2] amdgpu/dma-buf: fall back to GTT when large BAR is absent
+ amd/amdgpu/amdgpu_dma_buf.c | 0 +
+ 1 file changed, 0 insertions(+)
 
-Systems without large BAR (resizable BAR / ReBAR) only expose a partial
-aperture of GPU VRAM through the PCIe BAR.  When an importer — such as
-the NVMe driver using the io_uring DMA-BUF patchset — attaches and then
-maps a VRAM-backed DMA-BUF for peer-to-peer DMA, the physical addresses
-produced by amdgpu_vram_mgr_alloc_sgt() may lie outside the PCIe-
-accessible window (aper_base .. aper_base + aper_size).  The importer's
-DMA engine cannot reach those addresses, causing the transfer to silently
-produce bad data or to fail outright.
-
-Fix this by comparing real_vram_size to visible_vram_size inside
-amdgpu_dma_buf_map().  When they differ the GPU lacks large BAR.  If the
-BO currently lives in VRAM, evict it to GTT before building the sg-table
-so the importer gets system-RAM-backed DMA addresses it can always reach
-via standard PCIe DMA.
-
-The new helper amdgpu_dma_buf_evict_to_gtt() performs the move using
-ttm_bo_validate() with the BO's existing reservation lock held (which is
-the case throughout dma_buf_map_attachment()).  A pinned BO cannot be
-moved; the helper returns -EBUSY so that callers receive a clear error
-rather than silently issuing a DMA to an unreachable address.
-
-This enables "hipfile" style P2P I/O — io_uring DMA-BUF registered
-buffers pointing at HIP device memory — on platforms without resizable
-BAR.  The transfer goes through system RAM rather than directly into
-VRAM, but the GPU can still access the data without an extra copy since
-GTT memory is GPU-visible.  True peer-to-peer (VRAM <-> NVMe) continues
-to work unchanged on large-BAR systems because the new code path is only
-entered when visible_vram_size < real_vram_size.
-
-Signed-off-by: Stephen Bates <sbates@raithlin.com>
----
- amd/amdgpu/amdgpu_dma_buf.c | 67 +++++++++++++++++++++++++++++++++++-
- 1 file changed, 66 insertions(+), 1 deletion(-)
-
-diff --git a/amd/amdgpu/amdgpu_dma_buf.c b/amd/amdgpu/amdgpu_dma_buf.c
-index 0000000..0000000 100644
 --- a/amd/amdgpu/amdgpu_dma_buf.c
 +++ b/amd/amdgpu/amdgpu_dma_buf.c
-@@ -1,6 +1,8 @@
- // SPDX-License-Identifier: MIT
- /*
-  * Copyright 2019 Advanced Micro Devices, Inc.
-+ *
-+ * No-large-BAR GTT fallback for DMA-BUF P2P (hipfile support).
-  */
- 
- /**
-@@ -40,6 +42,8 @@
- #include "amdgpu.h"
- #include "amdgpu_display.h"
- #include "amdgpu_gem.h"
+@@ -37,6 +37,7 @@
+ #include "amdgpu_dma_buf.h"
+ #include "amdgpu_xgmi.h"
+ #include "amdgpu_vm.h"
 +#include "amdgpu_object.h"
-+#include "amdgpu_ttm.h"
- 
- /**
-  * amdgpu_dma_buf_attach - &dma_buf_ops.attach implementation
-@@ -100,6 +104,59 @@
- 	return 0;
+ #include "amdgpu_ttm.h"
+ #include <drm/amdgpu_drm.h>
+ #include <drm/ttm/ttm_tt.h>
+@@ -92,6 +93,29 @@
  }
+ #endif
  
 +/**
-+ * amdgpu_dma_buf_evict_to_gtt - move a VRAM BO to GTT for DMA-BUF access
-+ * @bo: the amdgpu BO currently resident in VRAM
++ * amdgpu_dma_buf_evict_to_gtt - evict a VRAM BO to GTT for DMA-BUF P2P
++ * @bo: amdgpu buffer object (reservation lock must be held by caller)
 + *
-+ * Called from amdgpu_dma_buf_map() when the GPU lacks large BAR support and
-+ * the BO must be accessible by a PCIe importer (e.g. NVMe).  Must be called
-+ * with the BO's reservation lock already held, which is always the case
-+ * inside dma_buf_map_attachment().
++ * On systems without large BAR the VRAM aperture is smaller than real VRAM.
++ * An importer (e.g. the NVMe driver via io_uring DMA-BUF) may be unable to
++ * DMA to VRAM addresses outside the aperture window.  Evict the BO to GTT
++ * so the importer receives system-RAM-backed DMA addresses it can always reach.
 + *
-+ * Returns 0 on success.  Returns -EBUSY if the BO is pinned and therefore
-+ * cannot be relocated; in that case the caller should propagate the error to
-+ * userspace so it can unpin the buffer before retrying the DMA-BUF export.
++ * Returns 0 on success, -EBUSY if the BO is pinned and cannot be moved, or a
++ * negative error code from ttm_bo_validate().
 + */
 +static int amdgpu_dma_buf_evict_to_gtt(struct amdgpu_bo *bo)
 +{
-+	struct ttm_operation_ctx ctx = {
-+		.interruptible = true,
-+		.no_wait_gpu   = false,
-+	};
++	struct ttm_operation_ctx ctx = { false, false };
 +
-+	dma_resv_assert_held(bo->tbo.base.resv);
-+
-+	/*
-+	 * A pinned BO has a fixed VRAM address and cannot be moved.  Returning
-+	 * -EBUSY surfaces a clear diagnostic to callers rather than letting a
-+	 * DMA proceed to an unreachable address.
-+	 */
 +	if (bo->tbo.pin_count)
 +		return -EBUSY;
 +
-+	/*
-+	 * Use amdgpu's own placement helper so that any BO-specific flags
-+	 * (e.g. AMDGPU_GEM_CREATE_CPU_GTT_USWC) are honoured in the GTT
-+	 * placement entry.
-+	 */
 +	amdgpu_bo_placement_from_domain(bo, AMDGPU_GEM_DOMAIN_GTT);
 +	return ttm_bo_validate(&bo->tbo, &bo->placement, &ctx);
 +}
 +
- /**
-  * amdgpu_dma_buf_map - &dma_buf_ops.map_dma_buf implementation
-  * @attach: DMA-BUF attachment
-@@ -115,7 +172,8 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
- 					    enum dma_data_direction direction)
- {
- 	struct dma_buf *dma_buf = attach->dmabuf;
--	struct drm_gem_object *obj = dma_buf->priv;
-+	struct drm_gem_object *obj  = dma_buf->priv;
- 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
- 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);
- 	struct sg_table *sgt;
-@@ -143,6 +201,37 @@ static struct sg_table *amdgpu_dma_buf_map(struct dma_buf_attachment *attach,
+ #if defined(HAVE_DMA_BUF_OPS_LEGACY)
+ static int
+ __dma_resv_make_exclusive(struct dma_resv *obj)
+@@ -408,6 +432,29 @@
+ 		break;
  
  	case TTM_PL_VRAM:
 +		/*
-+		 * Without large BAR (resizable BAR / ReBAR), the PCIe aperture
-+		 * only covers visible_vram_size bytes of VRAM.  Any BO placed
-+		 * in the portion of VRAM beyond that window is unreachable by
-+		 * other PCIe masters (e.g. NVMe) via DMA.
-+		 *
-+		 * Detect this condition and evict the BO to GTT so that the
-+		 * importer receives system-RAM-backed DMA addresses it can
-+		 * always reach.  On large-BAR systems (real_vram_size ==
-+		 * visible_vram_size) the check is skipped and the existing
-+		 * VRAM-direct P2P path is used unchanged.
++		 * On no-large-BAR systems the VRAM aperture is smaller than the
++		 * total VRAM.  The importer's DMA engine cannot reach VRAM
++		 * addresses outside the aperture, so evict the BO to GTT first
++		 * and fall through to the TTM_PL_TT path.
 +		 */
 +		if (adev->gmc.real_vram_size > adev->gmc.visible_vram_size) {
++			dev_warn_ratelimited(adev->dev,
++				"amdgpu: no large BAR — evicting BO to GTT for DMA-BUF P2P\n");
 +			r = amdgpu_dma_buf_evict_to_gtt(bo);
-+			if (r) {
-+				dev_warn_ratelimited(adev->dev,
-+					"amdgpu: no large BAR: failed to move BO to GTT for DMA-BUF P2P: %ld\n",
-+					r);
++			if (r)
 +				return ERR_PTR(r);
-+			}
-+			/*
-+			 * BO is now resident in GTT; fall through to build a
-+			 * page-backed scatter-gather table from its TTM pages.
-+			 */
++			/* BO is now in GTT; rebuild sgt via the TT path */
 +			sgt = drm_prime_pages_to_sg(obj->dev,
 +						    bo->tbo.ttm->pages,
 +						    bo->tbo.ttm->num_pages);
 +			if (IS_ERR(sgt))
 +				return sgt;
-+			r = dma_map_sgtable(attach->dev, sgt, direction,
-+					    DMA_ATTR_SKIP_CPU_SYNC);
-+			if (r)
++			if (dma_map_sgtable(attach->dev, sgt, dir,
++					    DMA_ATTR_SKIP_CPU_SYNC))
 +				goto error_free;
 +			break;
 +		}
- 		r = amdgpu_vram_mgr_alloc_sgt(adev, bo->tbo.resource,
- 					       0, bo->tbo.base.size,
- 					       attach->dev, direction,
+ 		r = amdgpu_vram_mgr_alloc_sgt(adev, bo->tbo.resource, 0,
+ 					      bo->tbo.base.size, attach->dev,
+ 					      dir, &sgt);
