@@ -10,6 +10,7 @@
 [![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
 [![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
 [![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-RFC%20v3-orange.svg)](https://lore.kernel.org/io-uring/cover.1777475843.git.asml.silence@gmail.com/)
+[![amdgpu no-large-BAR](https://img.shields.io/badge/amdgpu-no--large--BAR-blue.svg)](patches/amdgpu-no-large-bar/README.md)
 
 This repo contains a few scripts I find useful for kernel
 hacking. Feel free to use and abuse these as you see fit.
@@ -81,6 +82,16 @@ Example — build with a patch series and install:
 KERNEL_VER=6.8.0-136-generic \
   AMDGPU_REF=therock-7.14 \
   PATCH_DIRS=./patches/my-fixes \
+  ./scripts/build-amdgpu-dkms
+```
+
+Example — build with the no-large-BAR hipfile patches (see
+`patches/amdgpu-no-large-bar/`):
+
+```bash
+KERNEL_VER=6.8.0-136-generic \
+  AMDGPU_REF=therock-7.14 \
+  PATCH_DIRS=./patches/amdgpu-no-large-bar \
   ./scripts/build-amdgpu-dkms
 ```
 

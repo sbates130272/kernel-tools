@@ -2,6 +2,8 @@ ACS
 AMDGPU
 README
 ShellCheck
+BAR
+BOs
 BPF
 BTF
 BUF
@@ -9,6 +11,7 @@ Begunkov
 Begunkov's
 Broadcom
 CONFIG
+CPU
 CXX
 CXXFLAGS
 CentOS
@@ -19,9 +22,14 @@ DMA
 DMABUF
 DRM
 Dockerfile
+EBUSY
 Eideticom
 GCN
+GEM
+GPU
 GPUs
+GTT
+HIP
 HW
 IORING
 IPsec
@@ -33,11 +41,16 @@ Mellanox
 NIC
 NNNN
 NVMe
+P2P
+P2PDMA
 PCIe
 Pavel
 PERCPU
+PREFER_GTT_NO_LARGE_BAR
 QEMU
 RDNA
+RAM
+ReBAR
 Radeon
 REGBUF
 RHEL
@@ -49,6 +62,7 @@ SETLINK
 SPSC
 Taehee
 TaeheeYoo
+TTM
 UDP
 UAPI
 VER
@@ -97,6 +111,7 @@ gmail
 gz
 hardcoded
 hipcc
+hipfile
 href
 html
 http
@@ -146,6 +161,7 @@ rocm
 rpms
 sbates
 scm
+serializes
 shellcheck
 sig
 sr
