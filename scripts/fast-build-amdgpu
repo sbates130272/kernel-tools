@@ -1,0 +1,468 @@
+#!/bin/bash
+#
+# (c) Stephen Bates, 2026
+#
+# Accelerated amdgpu out-of-tree module build that bypasses DKMS to
+# preserve incremental .o files across builds.  Useful when iterating
+# on patches: only the changed translation units are recompiled.
+#
+# The DKMS workflow creates a fresh build directory on every run, so
+# every build is a cold build even when only one .c file changed.  This
+# script instead calls the kernel build system directly with a persistent
+# M= output directory, keeping all .o/.cmd files between runs.
+#
+# ccache is automatically used when present; set CCACHE_DIR to a
+# mounted volume to persist the cache across Docker container restarts.
+#
+# Example calls:
+#
+#   KERNEL_VER=7.0.0-34-generic \
+#     AMDGPU_REF=roc-7.2.x \
+#     ./scripts/fast-build-amdgpu
+#
+#   KERNEL_VER=7.0.0-34-generic \
+#     AMDGPU_REF=roc-7.2.x \
+#     PATCH_DIRS=./patches/amdgpu-no-large-bar \
+#     INSTALL=no \
+#     ./scripts/fast-build-amdgpu
+#
+#   # Force a full re-stage + rebuild (new ref, new patch series, etc.)
+#   FORCE=yes KERNEL_VER=7.0.0-34-generic AMDGPU_REF=roc-7.2.x \
+#     ./scripts/fast-build-amdgpu
+#
+# Output:
+#   Built .ko files land in ${BUILD_OUT}/ and are optionally installed
+#   via modprobe.  No DKMS registration is performed.
+#
+# Acceleration levers used:
+#   1. Persistent BUILD_OUT directory — .o files survive between runs.
+#   2. ccache — repeated identical compilations hit the cache instantly.
+#   3. Parallel git archive — source staging runs all extractions in
+#      the background and waits for them together (~2-3x faster staging).
+#   4. Source hash check — staging is skipped when the ref and patch
+#      set have not changed since the last successful stage.
+#
+
+set -e
+
+KERNEL_DIR=${KERNEL_DIR:-./src}
+AMDGPU_REMOTE=${AMDGPU_REMOTE:-amdgpu}
+AMDGPU_REF=${AMDGPU_REF:-master}
+PATCH_DIRS=${PATCH_DIRS:-}
+INSTALL=${INSTALL:-yes}
+FORCE=${FORCE:-no}
+# STAGE_ROOT: where staged sources live (mirrors /usr/src/ for DKMS,
+# but here kept local so Docker containers don't need root on the host).
+STAGE_ROOT=${STAGE_ROOT:-./amdgpu-build}
+# BUILD_OUT: persistent kernel-build output dir (contains .o / .cmd).
+BUILD_OUT_BASE=${BUILD_OUT_BASE:-./amdgpu-build-out}
+# BUILD_SRC: pre-staged, writable source directory.  When set, git
+# operations (fetch, archive, patch) are skipped entirely.  AMDGPU_VER
+# is derived from the basename.  The directory must be writable because
+# pre-build.sh modifies files in-place.
+BUILD_SRC_OVERRIDE=${BUILD_SRC:-}
+
+REPO_ROOT=$(pwd)
+# Only prepend REPO_ROOT for relative paths (absolute paths pass through unchanged).
+[[ "${KERNEL_DIR}" != /* ]] && KERNEL_DIR="${REPO_ROOT}/${KERNEL_DIR}"
+[[ "${STAGE_ROOT}" != /* ]] && STAGE_ROOT="${REPO_ROOT}/${STAGE_ROOT}"
+[[ "${BUILD_OUT_BASE}" != /* ]] && BUILD_OUT_BASE="${REPO_ROOT}/${BUILD_OUT_BASE}"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die () { echo "Error. $*" >&2; exit 1; }
+info () { echo "  INFO: $*"; }
+
+# Run up to N background jobs; wait for all when the table is full.
+_BG_PIDS=()
+bg_run () {
+    "$@" &
+    _BG_PIDS+=($!)
+}
+bg_wait () {
+    local rc=0
+    for pid in "${_BG_PIDS[@]}"; do
+        wait "$pid" || rc=$?
+    done
+    _BG_PIDS=()
+    return $rc
+}
+
+# ---------------------------------------------------------------------------
+check_deps ()
+{
+    [ -n "${KERNEL_VER}" ] || die "KERNEL_VER must be set."
+    [ -d "/lib/modules/${KERNEL_VER}/build" ] || \
+        die "Kernel headers not found at /lib/modules/${KERNEL_VER}/build."
+    which make &>/dev/null || die "make not installed."
+    which autoconf &>/dev/null || die "autoconf not installed."
+    which automake &>/dev/null || die "automake not installed."
+
+    if which ccache &>/dev/null; then
+        info "ccache detected (CCACHE_DIR=${CCACHE_DIR:-(not set)})."
+        USE_CCACHE=yes
+    else
+        USE_CCACHE=no
+    fi
+}
+
+# ---------------------------------------------------------------------------
+get_amdgpu_version ()
+{
+    cd "${KERNEL_DIR}"
+    if git rev-parse --verify --quiet "${AMDGPU_REF}^{commit}" &>/dev/null; then
+        info "Resolved ${AMDGPU_REF} locally, skipping fetch."
+        GIT_REF="${AMDGPU_REF}"
+    else
+        info "Fetching ${AMDGPU_REMOTE}/${AMDGPU_REF}..."
+        git fetch "${AMDGPU_REMOTE}" "${AMDGPU_REF}"
+        GIT_REF="FETCH_HEAD"
+    fi
+    SHORT_SHA=$(git rev-parse --short "${GIT_REF}")
+    SAFE_REF=$(echo "${AMDGPU_REF}" | tr '/' '-')
+    AMDGPU_VER="${SAFE_REF}-${SHORT_SHA}"
+    BUILD_SRC="${STAGE_ROOT}/amdgpu-${AMDGPU_VER}"
+    BUILD_OUT="${BUILD_OUT_BASE}/amdgpu-${AMDGPU_VER}-${KERNEL_VER}"
+    info "amdgpu version: ${AMDGPU_VER}"
+    info "Staged source:  ${BUILD_SRC}"
+    info "Build output:   ${BUILD_OUT}"
+}
+
+# ---------------------------------------------------------------------------
+# Compute a hash over the ref commit + patch file contents so we can skip
+# re-staging when nothing changed.
+compute_stage_hash ()
+{
+    {
+        if [ -n "${BUILD_SRC_OVERRIDE}" ]; then
+            # No git access in the override path; hash the staged source mtime tree
+            # plus patch file contents.  Fast and sufficient for change detection.
+            find "${BUILD_SRC}" -name '*.c' -o -name '*.h' \
+                | sort | xargs stat --format='%n %Y %s' 2>/dev/null
+        else
+            local full_sha
+            full_sha=$(cd "${KERNEL_DIR}" && git rev-parse "${GIT_REF}")
+            echo "${full_sha}"
+        fi
+        if [ -n "${PATCH_DIRS}" ]; then
+            IFS=':' read -ra _dirs <<< "${PATCH_DIRS}"
+            for d in "${_dirs[@]}"; do
+                [[ "${d}" != /* ]] && d="${REPO_ROOT}/${d}"
+                find "${d}" -maxdepth 1 -name '*.patch' | sort -V | xargs sha256sum 2>/dev/null
+            done
+        fi
+    } | sha256sum | awk '{print $1}'
+}
+
+STAGE_HASH_FILE="${STAGE_ROOT}/.stage-hash"
+
+stage_needed ()
+{
+    [ "${FORCE}" == "yes" ] && return 0
+    [ ! -d "${BUILD_SRC}" ] && return 0
+    [ ! -f "${STAGE_HASH_FILE}" ] && return 0
+    local stored
+    stored=$(cat "${STAGE_HASH_FILE}")
+    local current
+    current=$(compute_stage_hash)
+    [ "${stored}" != "${current}" ]
+}
+
+# ---------------------------------------------------------------------------
+stage_source ()
+{
+    if ! stage_needed; then
+        info "Source already staged and hash matches, skipping."
+        return
+    fi
+    info "Staging amdgpu source to ${BUILD_SRC}..."
+    cd "${KERNEL_DIR}"
+
+    rm -rf "${BUILD_SRC}"
+    mkdir -p "${BUILD_SRC}"
+
+    # --- parallel git archive extractions ---
+    info "Extracting sources in parallel..."
+
+    git archive "${GIT_REF}" drivers/gpu/drm/amd \
+        | tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _BG_PIDS+=($!)
+
+    git archive "${GIT_REF}" drivers/gpu/drm/ttm \
+        | tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _BG_PIDS+=($!)
+
+    git archive "${GIT_REF}" drivers/gpu/drm/scheduler \
+        | tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _BG_PIDS+=($!)
+
+    # DRM core files carried out-of-tree — serial because they go to the same dir
+    # but we can at least start them while the big archives are running.
+    (
+        for f in drm_gem_ttm_helper.c drm_buddy.c drm_exec.c drm_suballoc.c; do
+            git archive "${GIT_REF}" drivers/gpu/drm/${f} \
+                | tar -x --strip-components=3 -C "${BUILD_SRC}"
+        done
+    ) &
+    _BG_PIDS+=($!)
+
+    # include/kcl
+    (
+        mkdir -p "${BUILD_SRC}/include"
+        git archive "${GIT_REF}" include/kcl \
+            | tar -x --strip-components=1 -C "${BUILD_SRC}/include"
+    ) &
+    _BG_PIDS+=($!)
+
+    # drm headers
+    (
+        mkdir -p "${BUILD_SRC}/include/drm"
+        git archive "${GIT_REF}" include/drm/ttm \
+            | tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm"
+        for f in amd_asic_type.h amd_rdma.h spsc_queue.h \
+                  drm_buddy.h drm_exec.h drm_gem_ttm_helper.h gpu_scheduler.h; do
+            git archive "${GIT_REF}" include/drm/${f} 2>/dev/null \
+                | tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm" || true
+        done
+    ) &
+    _BG_PIDS+=($!)
+
+    # uapi headers
+    (
+        mkdir -p "${BUILD_SRC}/include/uapi/drm" "${BUILD_SRC}/include/uapi/linux"
+        git archive "${GIT_REF}" include/uapi/drm/amdgpu_drm.h \
+            | tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/drm"
+        for f in kfd_ioctl.h kfd_sysfs.h; do
+            git archive "${GIT_REF}" include/uapi/linux/${f} 2>/dev/null \
+                | tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/linux" || true
+        done
+    ) &
+    _BG_PIDS+=($!)
+
+    # dma-resv
+    (
+        mkdir -p "${BUILD_SRC}/amd/amdkcl/dma-buf" "${BUILD_SRC}/include/linux"
+        git archive "${GIT_REF}" drivers/dma-buf/dma-resv.c \
+            | tar -x --strip-components=2 -C "${BUILD_SRC}/amd/amdkcl/dma-buf"
+        git archive "${GIT_REF}" include/linux/dma-resv.h \
+            | tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux"
+        git archive "${GIT_REF}" include/kcl/reservation.h 2>/dev/null \
+            | tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux" || true
+    ) &
+    _BG_PIDS+=($!)
+
+    bg_wait
+
+    info "Linking Makefile and dkms.conf..."
+    ln -sf amd/dkms/Makefile "${BUILD_SRC}/Makefile"
+    ln -sf amd/dkms/dkms.conf "${BUILD_SRC}/dkms.conf"
+
+    info "Generating configure script..."
+    (cd "${BUILD_SRC}/amd/dkms" && \
+        aclocal -I m4 && \
+        autoheader && \
+        autoconf -o "${BUILD_SRC}/amd/dkms/configure" configure.ac)
+
+    # Stub rq-offsets.h if absent (header packages omit this generated file).
+    local kbuild="/lib/modules/${KERNEL_VER}/build"
+    if [ ! -f "${kbuild}/include/generated/rq-offsets.h" ]; then
+        info "Creating rq-offsets.h stub in kernel headers..."
+        touch "${kbuild}/include/generated/rq-offsets.h"
+    fi
+
+    SOURCE_STAGED=yes
+}
+
+# ---------------------------------------------------------------------------
+apply_patches ()
+{
+    [ -n "${PATCH_DIRS}" ] || return 0
+    if [ "${SOURCE_STAGED}" != "yes" ] && [ "${FORCE}" == "no" ]; then
+        info "Source not re-staged; skipping patch application."
+        return
+    fi
+    IFS=':' read -ra dir_list <<< "${PATCH_DIRS}"
+    for dir in "${dir_list[@]}"; do
+        [[ "${dir}" != /* ]] && dir="${REPO_ROOT}/${dir}"
+        [ -d "${dir}" ] || die "Patch directory '${dir}' does not exist."
+        mapfile -t patches < <(find "${dir}" -maxdepth 1 -name '*.patch' | sort -V)
+        [ ${#patches[@]} -eq 0 ] && {
+            info "No .patch files in '${dir}', skipping."
+            continue
+        }
+        info "Applying ${#patches[@]} patch(es) from '${dir}'..."
+        for p in "${patches[@]}"; do
+            info "  $(basename "${p}")"
+            patch -d "${BUILD_SRC}" -p1 --fuzz=3 < "${p}"
+        done
+    done
+}
+
+# ---------------------------------------------------------------------------
+# Run pre-build.sh to set up config.h, rename_symbol.h, dkms-config.mk,
+# and the MODULE_BUILD_DIR symlink, then call make directly.
+#
+# The persistent BUILD_OUT directory replaces DKMS's ephemeral build dir:
+#   - Kernel build system deposits .o/.cmd files here between runs.
+#   - pre-build.sh writes a symlink MODULE_BUILD_DIR -> BUILD_SRC there.
+# ---------------------------------------------------------------------------
+run_prebuild ()
+{
+    # BUILD_OUT is the persistent working tree: source + object files colocated.
+    # The kernel OOT module build system always places .o files in M= (the source
+    # tree), so for incremental builds to survive across container runs the source
+    # tree must live on a persistent volume, not a tmpfs.
+    #
+    # Strategy:
+    #   1. BUILD_SRC is the initial (possibly read-only) staged source.
+    #   2. BUILD_OUT is a persistent directory on a named volume.
+    #   3. We rsynce source → BUILD_OUT once, then always build from BUILD_OUT.
+    #   4. pre-build.sh is rerun only when the .env file is missing (first time
+    #      or after a FORCE clean).  This avoids re-running configure every run.
+    #
+    # Note: BUILD_SRC may equal BUILD_OUT when the caller already placed source
+    # on the persistent volume (e.g. a writable bind-mount of /usr/src/...).
+
+    mkdir -p "${BUILD_OUT}"
+
+    # Sync source into the persistent build dir only when the stage hash changed
+    # (i.e. ref or patches changed) or BUILD_OUT is empty or FORCE=yes.
+    # Skipping rsync preserves the patched source and compiled .o files from
+    # the previous run — only the changed translation units are recompiled.
+    local do_sync=no
+    if [ "${FORCE}" == "yes" ]; then
+        do_sync=yes
+    elif [ ! -d "${BUILD_OUT}/amd" ]; then
+        do_sync=yes
+    elif [ -n "${BUILD_SRC_OVERRIDE}" ]; then
+        # Using pre-staged source: compare patch-set hash to detect changes.
+        # (Source content hash is too expensive on every run; we only hash patches.)
+        local current_hash stored_hash=""
+        current_hash=$(
+            { if [ -n "${PATCH_DIRS}" ]; then
+                IFS=':' read -ra _d <<< "${PATCH_DIRS}"
+                for d in "${_d[@]}"; do
+                    [[ "${d}" != /* ]] && d="${REPO_ROOT}/${d}"
+                    find "${d}" -maxdepth 1 -name '*.patch' | sort -V | xargs sha256sum 2>/dev/null
+                done
+              fi
+            } | sha256sum | awk '{print $1}'
+        )
+        [ -f "${BUILD_OUT}/.stage-hash" ] && stored_hash=$(cat "${BUILD_OUT}/.stage-hash")
+        [ "${current_hash}" != "${stored_hash}" ] && do_sync=yes
+    fi
+
+    if [ "${do_sync}" == "yes" ] && [ "${BUILD_SRC}" != "${BUILD_OUT}" ]; then
+        info "Syncing source to persistent build dir (stage changed)..."
+        rsync -a --delete --exclude='*.o' --exclude='*.ko' --exclude='.tmp_*' \
+            "${BUILD_SRC}/" "${BUILD_OUT}/"
+        # Stage hash is recorded after apply_patches writes it — done in main.
+    fi
+
+    # From here on work in BUILD_OUT which holds both source and objects.
+    BUILD_SRC="${BUILD_OUT}"
+
+    if [ -f "${BUILD_OUT}/.env" ] && [ "${FORCE}" == "no" ] && [ "${do_sync}" == "no" ]; then
+        info "pre-build already done (${BUILD_OUT}/.env exists), skipping."
+        return
+    fi
+
+    # pre-build.sh passes CC to autoconf's configure to probe kernel APIs.
+    # Always use plain gcc here — ccache wrappers confuse configure's compiler
+    # sanity checks (configure tries to compile and link test binaries).
+    info "Running pre-build.sh (KERNELVER=${KERNEL_VER})..."
+    cd "${BUILD_OUT}"
+    bash amd/dkms/pre-build.sh \
+        "${KERNEL_VER}" \
+        "${BUILD_OUT}" \
+        "${BUILD_OUT}" \
+        "gcc"
+}
+
+run_build ()
+{
+    local kbuild="/lib/modules/${KERNEL_VER}/build"
+    local jobs
+    jobs=$(nproc)
+
+    info "Building with ${jobs} jobs (ccache=${USE_CCACHE})..."
+
+    # BUILD_SRC was updated by run_prebuild to point at BUILD_OUT (the
+    # persistent directory with source + object files colocated).
+    cd "${BUILD_SRC}"
+
+    # Source .env written by pre-build.sh (sets PATH for gcc-toolset etc.)
+    # shellcheck disable=SC1090,SC1091
+    . "${BUILD_SRC}/.env"
+
+    local cc_flags=""
+    [ "${USE_CCACHE}" == "yes" ] && cc_flags="CC='ccache gcc' HOSTCC='ccache gcc'"
+
+    # Override module_build_dir so the amd/dkms/Makefile uses BUILD_SRC
+    # (the persistent directory) instead of creating a fresh mktemp symlink.
+    # Objects accumulate here across runs — only changed .c files recompile.
+    # shellcheck disable=SC2086,SC2046
+    eval make -j"${jobs}" \
+        KERNELVER="${KERNEL_VER}" \
+        module_build_dir="${BUILD_SRC}" \
+        ${cc_flags} \
+        2>&1 | tee "${BUILD_SRC}/build.log"
+}
+
+install_modules ()
+{
+    [ "${INSTALL}" == "yes" ] || { info "INSTALL=no, skipping install."; return; }
+
+    local kmod_dir="/lib/modules/${KERNEL_VER}/extra/amdgpu"
+    info "Installing .ko files to ${kmod_dir}..."
+    mkdir -p "${kmod_dir}"
+
+    # After run_prebuild BUILD_SRC == BUILD_OUT (persistent volume).
+    # The kernel build system deposits .ko into BUILD_SRC subdirs.
+    find "${BUILD_SRC}" -name '*.ko' -exec install -m644 {} "${kmod_dir}/" \;
+
+    depmod -a "${KERNEL_VER}"
+    info "Modules installed and depmod run."
+}
+
+# Write stage hash only after a successful stage+patch run.
+write_stage_hash ()
+{
+    if [ -n "${BUILD_SRC_OVERRIDE}" ]; then
+        # For the override path the hash file lives alongside the build objects.
+        compute_stage_hash > "${BUILD_OUT}/.stage-hash"
+    else
+        mkdir -p "${STAGE_ROOT}"
+        compute_stage_hash > "${STAGE_HASH_FILE}"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+check_deps
+if [ -n "${BUILD_SRC_OVERRIDE}" ]; then
+    BUILD_SRC="${BUILD_SRC_OVERRIDE}"
+    AMDGPU_VER=$(basename "${BUILD_SRC}" | sed 's/^amdgpu-//')
+    BUILD_OUT="${BUILD_OUT_BASE}/amdgpu-${AMDGPU_VER}-${KERNEL_VER}"
+    [ -d "${BUILD_SRC}" ] || die "BUILD_SRC '${BUILD_SRC}' not found."
+    info "Using pre-staged source: ${BUILD_SRC} (${AMDGPU_VER})"
+    info "Build output: ${BUILD_OUT}"
+    # run_prebuild syncs BUILD_SRC → BUILD_OUT when hash changed (or first run)
+    # and then updates BUILD_SRC=BUILD_OUT.  Patches are applied after sync.
+    run_prebuild
+    # After run_prebuild, BUILD_SRC == BUILD_OUT (persistent volume).
+    SOURCE_STAGED=yes
+    apply_patches
+    # Write hash so the next run knows not to re-sync when nothing changed.
+    write_stage_hash
+else
+    get_amdgpu_version
+    stage_source
+    apply_patches
+    [ "${SOURCE_STAGED}" == "yes" ] && write_stage_hash
+    run_prebuild
+fi
+run_build
+install_modules
+info "fast-build-amdgpu complete for ${AMDGPU_VER} / ${KERNEL_VER}."

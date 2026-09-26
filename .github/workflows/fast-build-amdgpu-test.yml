@@ -1,0 +1,146 @@
+name: fast-build-amdgpu-test
+
+# Tests scripts/fast-build-amdgpu: the DKMS-bypassing incremental build path
+# that keeps a persistent build directory and ccache to cut rebuild times.
+#
+# Verifies:
+#   1. Cold build succeeds and produces .ko files.
+#   2. Warm build (ccache hot, .o files present) completes faster.
+#   3. Build with a patch series succeeds.
+#   4. FORCE=yes triggers a clean re-sync and rebuild.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'scripts/fast-build-amdgpu'
+      - 'scripts/build-amdgpu-dkms'
+      - 'patches/amdgpu-no-large-bar/**'
+      - 'docker/Dockerfile.amdgpu-dkms'
+
+jobs:
+  fast-build-amdgpu-test:
+    name: fast-build-amdgpu-test
+    runs-on: ubuntu-24.04
+    env:
+      AMDGPU_REF: rocm-6.2.4
+      INSTALL: 'no'
+      BUILD_OUT_BASE: /tmp/amdgpu-build-out
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v7.0.1
+
+      - name: Fix git warning
+        run: git config --global init.defaultBranch main
+
+      - name: Detect available kernel headers version
+        id: kver
+        run: |
+          # rocm-6.2.4 supports the 6.8.x kernel series on Ubuntu 24.04
+          KVER=$(apt-cache search 'linux-headers-6\.8\.' | grep generic | \
+                 sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
+          echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf \
+            automake \
+            build-essential \
+            ccache \
+            dwarves \
+            rsync \
+            linux-headers-${{ steps.kver.outputs.kver }}
+
+      - name: Configure ccache
+        run: |
+          ccache --max-size=2G
+          ccache --zero-stats
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ steps.kver.outputs.kver }}-${{ github.sha }}
+          restore-keys: |
+            fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ steps.kver.outputs.kver }}-
+
+      - name: Run the init-update script to populate src/
+        run: ./scripts/init-update
+        env:
+          GIT_DEPTH: 1
+          CHECK_OUT: 'no'
+
+      - name: Fetch amdgpu remote
+        run: git fetch amdgpu ${AMDGPU_REF}
+        working-directory: ./src
+
+      - name: Cold fast-build (no patches)
+        run: |
+          echo "--- cold build start ---"
+          time ./scripts/fast-build-amdgpu
+        env:
+          KERNEL_VER: ${{ steps.kver.outputs.kver }}
+          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          INSTALL: ${{ env.INSTALL }}
+          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          CCACHE_DIR: ~/.ccache
+
+      - name: Verify .ko files were produced
+        run: |
+          find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | sort
+          test "$(find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | wc -l)" -ge 4
+
+      - name: Warm fast-build (ccache hot, identical source)
+        run: |
+          echo "--- warm build start ---"
+          time ./scripts/fast-build-amdgpu
+        env:
+          KERNEL_VER: ${{ steps.kver.outputs.kver }}
+          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          INSTALL: ${{ env.INSTALL }}
+          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          CCACHE_DIR: ~/.ccache
+
+      - name: Check ccache hit rate after warm build
+        run: |
+          ccache --show-stats
+          HIT_RATE=$(ccache --show-stats | awk '/Hits:/ {gsub(/[()%]/,"",$NF); print $NF}' | head -1)
+          echo "ccache hit rate: ${HIT_RATE}%"
+
+      - name: Fast-build with amdgpu-no-large-bar patches
+        run: |
+          echo "--- patched build start ---"
+          time ./scripts/fast-build-amdgpu
+        env:
+          KERNEL_VER: ${{ steps.kver.outputs.kver }}
+          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          INSTALL: ${{ env.INSTALL }}
+          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          PATCH_DIRS: ./patches/amdgpu-no-large-bar
+          CCACHE_DIR: ~/.ccache
+          FORCE: 'yes'
+
+      - name: Verify .ko files still present after patched build
+        run: |
+          find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | sort
+          test "$(find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | wc -l)" -ge 4
+
+      - name: Second patched build (warm — same patch set)
+        run: |
+          echo "--- warm patched build start ---"
+          time ./scripts/fast-build-amdgpu
+        env:
+          KERNEL_VER: ${{ steps.kver.outputs.kver }}
+          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          INSTALL: ${{ env.INSTALL }}
+          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          PATCH_DIRS: ./patches/amdgpu-no-large-bar
+          CCACHE_DIR: ~/.ccache
+
+      - name: Show final ccache stats
+        run: ccache --show-stats

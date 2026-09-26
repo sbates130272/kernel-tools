@@ -20,6 +20,7 @@ jobs:
           shellcheck -x \
             scripts/init-update \
             scripts/build-amdgpu-dkms \
+            scripts/fast-build-amdgpu \
             scripts/build-remote \
             scripts/build-kernel-debrpm \
             scripts/build-latest-io-uring-dmabuf-kernel \
