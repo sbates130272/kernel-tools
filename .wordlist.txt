@@ -91,6 +91,7 @@ automake
 bnxt
 bo
 bpf
+buildout
 buf
 ccache
 cd
@@ -103,6 +104,7 @@ debrpm
 desc
 devel
 dev
+dir
 devmem
 disassembler
 dkms
@@ -137,6 +139,8 @@ insns
 io
 kfd
 knod
+kv
+KV
 iov
 li
 libbpf
