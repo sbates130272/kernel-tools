@@ -269,7 +269,7 @@ stage_source ()
     local kbuild="/lib/modules/${KERNEL_VER}/build"
     if [ ! -f "${kbuild}/include/generated/rq-offsets.h" ]; then
         info "Creating rq-offsets.h stub in kernel headers..."
-        touch "${kbuild}/include/generated/rq-offsets.h"
+        sudo touch "${kbuild}/include/generated/rq-offsets.h"
     fi
 
     SOURCE_STAGED=yes
@@ -417,13 +417,13 @@ install_modules ()
 
     local kmod_dir="/lib/modules/${KERNEL_VER}/extra/amdgpu"
     info "Installing .ko files to ${kmod_dir}..."
-    mkdir -p "${kmod_dir}"
+    sudo mkdir -p "${kmod_dir}"
 
     # After run_prebuild BUILD_SRC == BUILD_OUT (persistent volume).
     # The kernel build system deposits .ko into BUILD_SRC subdirs.
-    find "${BUILD_SRC}" -name '*.ko' -exec install -m644 {} "${kmod_dir}/" \;
+    find "${BUILD_SRC}" -name '*.ko' -exec sudo install -m644 {} "${kmod_dir}/" \;
 
-    depmod -a "${KERNEL_VER}"
+    sudo depmod -a "${KERNEL_VER}"
     info "Modules installed and depmod run."
 }
 
