@@ -326,6 +326,7 @@ run_prebuild ()
     # on the persistent volume (e.g. a writable bind-mount of /usr/src/...).
 
     mkdir -p "${BUILD_OUT}"
+    MOD_LINK="${BUILD_OUT%/}-modlink"
 
     # Sync source into the persistent build dir only when the stage hash changed
     # (i.e. ref or patches changed) or BUILD_OUT is empty or FORCE=yes.
@@ -369,16 +370,21 @@ run_prebuild ()
         return
     fi
 
-    # pre-build.sh passes CC to autoconf's configure to probe kernel APIs.
-    # Always use plain gcc here — ccache wrappers confuse configure's compiler
-    # sanity checks (configure tries to compile and link test binaries).
+    # pre-build.sh expects MODULE_BUILD_DIR to not yet exist: it creates it as
+    # a symlink → DKMS_TREE and writes .env there.  Use MOD_LINK (a stable
+    # sibling path) so the symlink survives between runs and .env is findable.
+    rm -f "${MOD_LINK}"   # remove stale symlink from a prior run
+
     info "Running pre-build.sh (KERNELVER=${KERNEL_VER})..."
     cd "${BUILD_OUT}"
     bash amd/dkms/pre-build.sh \
         "${KERNEL_VER}" \
         "${BUILD_OUT}" \
-        "${BUILD_OUT}" \
+        "${MOD_LINK}" \
         "gcc"
+    # pre-build.sh wrote .env into MOD_LINK (which symlinks to BUILD_OUT),
+    # so the file is actually at BUILD_OUT/.env.  MOD_LINK stays in place
+    # for the Makefile's module_build_dir override in run_build.
 }
 
 run_build ()
@@ -393,20 +399,21 @@ run_build ()
     # persistent directory with source + object files colocated).
     cd "${BUILD_SRC}"
 
-    # Source .env written by pre-build.sh (sets PATH for gcc-toolset etc.)
+    # Source .env written by pre-build.sh into BUILD_SRC (pre-build creates
+    # MOD_LINK as a symlink → BUILD_SRC, then writes .env there).
     # shellcheck disable=SC1090,SC1091
     . "${BUILD_SRC}/.env"
 
     local cc_flags=""
     [ "${USE_CCACHE}" == "yes" ] && cc_flags="CC='ccache gcc' HOSTCC='ccache gcc'"
 
-    # Override module_build_dir so the amd/dkms/Makefile uses BUILD_SRC
-    # (the persistent directory) instead of creating a fresh mktemp symlink.
-    # Objects accumulate here across runs — only changed .c files recompile.
+    # Pass MOD_LINK as module_build_dir so the amd/dkms/Makefile uses the
+    # same symlink that pre-build.sh created (which points to BUILD_SRC).
+    # Objects accumulate in BUILD_SRC across runs via the symlink.
     # shellcheck disable=SC2086,SC2046
     eval make -j"${jobs}" \
         KERNELVER="${KERNEL_VER}" \
-        module_build_dir="${BUILD_SRC}" \
+        module_build_dir="${MOD_LINK}" \
         ${cc_flags} \
         2>&1 | tee "${BUILD_SRC}/build.log"
 }
