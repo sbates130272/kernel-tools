@@ -115,6 +115,7 @@ dri
 drm
 dmabuf
 dwarves
+env
 enp
 eth
 fd
@@ -156,6 +157,7 @@ md
 mellanox
 microsoft
 mlx
+mnt
 mv
 netdev
 netlink
@@ -171,14 +173,18 @@ pdma
 pmem
 pre
 ptr
+pwd
 regbuf
 repo
 ratelimited
 resizable
 riscv
+ro
+roc
 selftests
 rocm
 rpms
+rsync
 sbates
 scm
 serializes
@@ -192,6 +198,7 @@ struct
 sudo
 therock
 ttm
+ubuntu
 uapi
 ul
 XDP
@@ -199,6 +206,7 @@ xdp
 Yoo
 uname
 uring
+usr
 uring's
 Userspace
 userspace
