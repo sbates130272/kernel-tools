@@ -207,6 +207,7 @@ Yoo
 uname
 uring
 usr
+ver
 uring's
 Userspace
 userspace
