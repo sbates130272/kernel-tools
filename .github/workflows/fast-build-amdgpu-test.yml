@@ -75,8 +75,12 @@ jobs:
           GIT_DEPTH: 1
           CHECK_OUT: 'no'
 
-      - name: Fetch amdgpu remote
-        run: git fetch amdgpu ${AMDGPU_REF}
+      - name: Fetch amdgpu remote (full blobs for git archive)
+        run: |
+          # init-update uses --filter=blob:none (partial clone) so git archive
+          # can't retrieve blobs without network access inside the build.
+          # Fetch the target ref without any filter so all blobs are local.
+          git fetch --no-filter amdgpu ${AMDGPU_REF}
         working-directory: ./src
 
       - name: Cold fast-build (no patches)
