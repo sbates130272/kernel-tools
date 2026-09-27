@@ -1,0 +1,93 @@
+# Dockerfile for amdgpu-dkms build acceleration testing.
+#
+# Builds against ubuntu-24.04 with a configurable kernel headers package.
+# Default is 6.8.0-142-generic (the kernel roc-7.2.x is compatible with).
+# ccache is pre-installed; mount a named volume at /ccache to persist
+# the cache across container runs and get incremental compile speedups.
+#
+# Build:
+#   docker build -f docker/Dockerfile.amdgpu-dkms \
+#     [-t KERNEL_VER=6.8.0-142-generic] \
+#     -t amdgpu-dkms-build:latest .
+#
+# Fast incremental build (bypasses DKMS, persistent build dir + ccache):
+#   docker run --rm -it \
+#     -v amdgpu-dkms-ccache:/ccache \
+#     -v amdgpu-dkms-buildout:/buildout \
+#     -v /lib/modules/6.8.0-142-generic:/lib/modules/6.8.0-142-generic:ro \
+#     -v /usr/src/linux-headers-6.8.0-142-generic:/usr/src/linux-headers-6.8.0-142-generic:ro \
+#     -v /usr/src/amdgpu-<ver>:/mnt/staged-ro:ro \
+#     --tmpfs /staged:exec,mode=0755 \
+#     -e KERNEL_VER=6.8.0-142-generic \
+#     -e BUILD_OUT_BASE=/buildout \
+#     -e INSTALL=no \
+#     -w /kernel-tools \
+#     amdgpu-dkms-build:latest \
+#     bash -c 'cp -a /mnt/staged-ro/. /staged/; BUILD_SRC=/staged bash scripts/fast-build-amdgpu'
+#
+# Traditional DKMS build (cold, for baseline comparison):
+#   docker run --rm -it \
+#     -v amdgpu-dkms-ccache:/ccache \
+#     -v /lib/modules/6.8.0-142-generic:/lib/modules/6.8.0-142-generic:ro \
+#     -v /usr/src/linux-headers-6.8.0-142-generic:/usr/src/linux-headers-6.8.0-142-generic:ro \
+#     -v /usr/src/amdgpu-<ver>:/usr/src/amdgpu-<ver>:ro \
+#     --tmpfs /var/lib/dkms:exec,mode=0755 \
+#     -e KERNEL_VER=6.8.0-142-generic \
+#     -e BUILD_SRC=/usr/src/amdgpu-<ver> \
+#     -e INSTALL=no \
+#     -w /kernel-tools \
+#     amdgpu-dkms-build:latest \
+#     bash scripts/build-amdgpu-dkms
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    autoconf \
+    automake \
+    bc \
+    build-essential \
+    ccache \
+    dkms \
+    git \
+    kmod \
+    libelf-dev \
+    libssl-dev \
+    pkg-config \
+    rsync \
+    && rm -rf /var/lib/apt/lists/*
+
+# Kernel headers are bind-mounted at runtime (not baked into the image) so
+# one image works across kernel versions.  The rq-offsets.h stub is created
+# at runtime by the build scripts when missing.
+# Override ARG to bake headers in (useful for CI where bind-mounts are unavailable):
+#   docker build --build-arg KERNEL_VER=6.8.0-142-generic ...
+ARG KERNEL_VER=
+# Only install baked-in headers when KERNEL_VER is specified at build time.
+RUN if [ -n "${KERNEL_VER}" ]; then \
+      apt-get update && \
+      apt-get install -y linux-headers-${KERNEL_VER} && \
+      rm -rf /var/lib/apt/lists/* && \
+      touch /lib/modules/${KERNEL_VER}/build/include/generated/rq-offsets.h; \
+    fi
+
+# ccache configuration: store cache in /ccache (mount a named volume here).
+# Max cache size 10 GB — tune down with -e CCACHE_MAXSIZE=Xg if needed.
+ENV CCACHE_DIR=/ccache
+ENV CCACHE_MAXSIZE=10G
+ENV CCACHE_COMPRESS=1
+ENV CCACHE_COMPRESSLEVEL=6
+
+# Prepend ccache wrappers so every gcc/g++ invocation goes through ccache.
+# The kernel build system uses CC=gcc explicitly in many places, so we also
+# set CC in the environment so make picks it up unless overridden.
+ENV PATH="/usr/lib/ccache:${PATH}"
+ENV CC="ccache gcc"
+
+# Working directory for build artefacts (build dir persists in this volume).
+VOLUME ["/ccache", "/build"]
+
+WORKDIR /kernel-tools
+
+CMD ["/bin/bash"]

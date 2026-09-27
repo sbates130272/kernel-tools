@@ -40,6 +40,10 @@ PATCH_DIRS=${PATCH_DIRS:-}
 INSTALL=${INSTALL:-yes}
 MKDEB=${MKDEB:-no}
 FORCE=${FORCE:-no}
+# BUILD_SRC: pre-staged source dir to use instead of staging from git.
+# When set, get_amdgpu_version and stage_source are skipped; AMDGPU_VER
+# is derived from the basename of BUILD_SRC (everything after 'amdgpu-').
+BUILD_SRC=${BUILD_SRC:-}
 
 REPO_ROOT=$(pwd)
 KERNEL_DIR=${REPO_ROOT}/${KERNEL_DIR}
@@ -109,66 +113,81 @@ stage_source ()
 
     sudo rm -rf "${BUILD_SRC}"
     sudo mkdir -p "${BUILD_SRC}"
+    sudo mkdir -p "${BUILD_SRC}/include" "${BUILD_SRC}/include/drm" \
+        "${BUILD_SRC}/include/uapi/drm" "${BUILD_SRC}/include/uapi/linux" \
+        "${BUILD_SRC}/amd/amdkcl/dma-buf" "${BUILD_SRC}/include/linux"
 
     # Stage exactly what AMD's own 'sources' manifest specifies — no more, no less.
     # This mirrors how the official amdgpu-dkms .deb is assembled: only AMD-specific
     # and DRM-core files that amdgpu carries out-of-tree are included. The host
     # kernel's own linux/, drm/, trace/ headers are used for everything else.
+    #
+    # All git archive extractions run in parallel (background jobs) so that git's
+    # object packing and tar decompression overlap across the independent subtrees.
+
+    echo "  INFO: Extracting sources in parallel..."
 
     # Strip drivers/gpu/drm/ (3 components) so the layout at BUILD_SRC is:
     #   amd/{amdgpu,amdkcl,amdkfd,dkms,...}  ttm/  scheduler/
-    echo "  INFO: Extracting drivers/gpu/drm/amd (this may take a while)..."
     git archive "${GIT_REF}" drivers/gpu/drm/amd \
-        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}"
+        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _pids=($!)
 
-    echo "  INFO: Extracting drivers/gpu/drm/ttm..."
     git archive "${GIT_REF}" drivers/gpu/drm/ttm \
-        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}"
+        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _pids+=($!)
 
-    echo "  INFO: Extracting drivers/gpu/drm/scheduler..."
     git archive "${GIT_REF}" drivers/gpu/drm/scheduler \
-        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}"
+        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}" &
+    _pids+=($!)
 
-    echo "  INFO: Extracting DRM core files carried out-of-tree..."
-    for f in drm_gem_ttm_helper.c drm_buddy.c drm_exec.c drm_suballoc.c; do
-        git archive "${GIT_REF}" drivers/gpu/drm/${f} \
-            | sudo tar -x --strip-components=3 -C "${BUILD_SRC}"
-    done
+    (
+        for f in drm_gem_ttm_helper.c drm_buddy.c drm_exec.c drm_suballoc.c; do
+            git archive "${GIT_REF}" drivers/gpu/drm/${f} \
+                | sudo tar -x --strip-components=3 -C "${BUILD_SRC}"
+        done
+    ) &
+    _pids+=($!)
 
-    echo "  INFO: Extracting include/kcl..."
-    sudo mkdir -p "${BUILD_SRC}/include"
-    git archive "${GIT_REF}" include/kcl \
-        | sudo tar -x --strip-components=1 -C "${BUILD_SRC}/include"
+    (
+        git archive "${GIT_REF}" include/kcl \
+            | sudo tar -x --strip-components=1 -C "${BUILD_SRC}/include"
+    ) &
+    _pids+=($!)
 
-    echo "  INFO: Extracting AMD-specific DRM headers..."
-    sudo mkdir -p "${BUILD_SRC}/include/drm"
-    git archive "${GIT_REF}" include/drm/ttm \
-        | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm"
-    for f in amd_asic_type.h amd_rdma.h spsc_queue.h \
-              drm_buddy.h drm_exec.h drm_gem_ttm_helper.h gpu_scheduler.h; do
-        git archive "${GIT_REF}" include/drm/${f} 2>/dev/null \
-            | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm" || true
-    done
+    (
+        git archive "${GIT_REF}" include/drm/ttm \
+            | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm"
+        for f in amd_asic_type.h amd_rdma.h spsc_queue.h \
+                  drm_buddy.h drm_exec.h drm_gem_ttm_helper.h gpu_scheduler.h; do
+            git archive "${GIT_REF}" include/drm/${f} 2>/dev/null \
+                | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/drm" || true
+        done
+    ) &
+    _pids+=($!)
 
-    echo "  INFO: Extracting uapi headers..."
-    sudo mkdir -p "${BUILD_SRC}/include/uapi/drm"
-    sudo mkdir -p "${BUILD_SRC}/include/uapi/linux"
-    git archive "${GIT_REF}" include/uapi/drm/amdgpu_drm.h \
-        | sudo tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/drm"
-    for f in kfd_ioctl.h kfd_sysfs.h; do
-        git archive "${GIT_REF}" include/uapi/linux/${f} 2>/dev/null \
-            | sudo tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/linux" || true
-    done
+    (
+        git archive "${GIT_REF}" include/uapi/drm/amdgpu_drm.h \
+            | sudo tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/drm"
+        for f in kfd_ioctl.h kfd_sysfs.h; do
+            git archive "${GIT_REF}" include/uapi/linux/${f} 2>/dev/null \
+                | sudo tar -x --strip-components=3 -C "${BUILD_SRC}/include/uapi/linux" || true
+        done
+    ) &
+    _pids+=($!)
 
-    echo "  INFO: Extracting dma-resv..."
-    sudo mkdir -p "${BUILD_SRC}/amd/amdkcl/dma-buf"
-    git archive "${GIT_REF}" drivers/dma-buf/dma-resv.c \
-        | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/amd/amdkcl/dma-buf"
-    sudo mkdir -p "${BUILD_SRC}/include/linux"
-    git archive "${GIT_REF}" include/linux/dma-resv.h \
-        | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux"
-    git archive "${GIT_REF}" include/kcl/reservation.h 2>/dev/null \
-        | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux" || true
+    (
+        git archive "${GIT_REF}" drivers/dma-buf/dma-resv.c \
+            | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/amd/amdkcl/dma-buf"
+        git archive "${GIT_REF}" include/linux/dma-resv.h \
+            | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux"
+        git archive "${GIT_REF}" include/kcl/reservation.h 2>/dev/null \
+            | sudo tar -x --strip-components=2 -C "${BUILD_SRC}/include/linux" || true
+    ) &
+    _pids+=($!)
+
+    for pid in "${_pids[@]}"; do wait "${pid}"; done
+    echo "  INFO: Source extraction complete."
 
     echo "  INFO: Setting up Makefile and dkms.conf at source root..."
     sudo ln -sf amd/dkms/Makefile "${BUILD_SRC}/Makefile"
@@ -193,7 +212,7 @@ stage_source ()
     if [ "${USE_CCACHE}" == "yes" ]; then
         echo "  INFO: Injecting ccache into ${BUILD_SRC}/amd/dkms/dkms.conf."
         sudo sed -i \
-            's|^\(MAKE\[0\]="[^"]*make \)|\1CC='"'"'ccache gcc'"'"' |' \
+            "s|MAKE\[0\]=\"'\(make\)'\(.*\)\"|MAKE[0]=\"'\1' CC='ccache gcc'\2\"|" \
             "${BUILD_SRC}/amd/dkms/dkms.conf"
     fi
     SOURCE_STAGED=yes
@@ -343,9 +362,26 @@ EOF
 }
 
 check_deps
-get_amdgpu_version
-stage_source
-apply_patches
+if [ -n "${BUILD_SRC}" ]; then
+    # Pre-staged source provided: skip git operations entirely.
+    # Derive AMDGPU_VER from the directory name (strip leading 'amdgpu-').
+    AMDGPU_VER=$(basename "${BUILD_SRC}" | sed 's/^amdgpu-//')
+    echo "  INFO: Using pre-staged source at ${BUILD_SRC} (version ${AMDGPU_VER})."
+    [ -d "${BUILD_SRC}" ] || { echo "Error. BUILD_SRC '${BUILD_SRC}' not found."; exit 1; }
+    # Inject ccache into dkms.conf if ccache is available and not already present.
+    if [ "${USE_CCACHE}" == "yes" ] && ! grep -q "ccache" "${BUILD_SRC}/amd/dkms/dkms.conf" 2>/dev/null; then
+        echo "  INFO: Injecting ccache into ${BUILD_SRC}/amd/dkms/dkms.conf."
+        # The standard dkms.conf line is: MAKE[0]="'make' KERNELVER=$kernelver"
+        # Inject CC=... before KERNELVER so ccache is used for all C compiles.
+        sudo sed -i \
+            "s|MAKE\[0\]=\"'\(make\)'\(.*\)\"|MAKE[0]=\"'\1' CC='ccache gcc'\2\"|" \
+            "${BUILD_SRC}/amd/dkms/dkms.conf"
+    fi
+else
+    get_amdgpu_version
+    stage_source
+    apply_patches
+fi
 dkms_add
 dkms_build
 if [ "${INSTALL}" == "yes" ]; then
