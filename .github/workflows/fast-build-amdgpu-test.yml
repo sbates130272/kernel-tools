@@ -69,27 +69,27 @@ jobs:
           restore-keys: |
             fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ steps.kver.outputs.kver }}-
 
-      - name: Run the init-update script to populate src/
-        run: ./scripts/init-update
-        env:
-          GIT_DEPTH: 1
-          CHECK_OUT: 'no'
-
-      - name: Fetch amdgpu remote (full blobs for git archive)
+      - name: Clone amdgpu source (full blobs for git archive)
+        # init-update uses --filter=blob:none (partial clone) so git archive
+        # can't retrieve individual file blobs — GitHub rejects object-ID
+        # fetches with "upload-pack: not our ref".  Clone the amdgpu remote
+        # directly with --depth=1 (no filter) so all blobs are local.
         run: |
-          # init-update uses --filter=blob:none (partial clone) so git archive
-          # can't retrieve blobs without network access inside the build.
-          # Fetch the target ref without any filter so all blobs are local.
-          git fetch --no-filter amdgpu ${AMDGPU_REF}
-        working-directory: ./src
+          git clone --depth=1 --branch ${AMDGPU_REF} \
+            https://github.com/ROCm/amdgpu.git /tmp/amdgpu-src
 
       - name: Cold fast-build (no patches)
+        # Use KERNEL_DIR=/tmp/amdgpu-src (the full --depth=1 clone without
+        # --filter) so git archive can read all blobs locally.  AMDGPU_REF=HEAD
+        # resolves to the single commit that was checked out.
         run: |
           echo "--- cold build start ---"
           time ./scripts/fast-build-amdgpu
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          KERNEL_DIR: /tmp/amdgpu-src
+          AMDGPU_REF: HEAD
+          AMDGPU_REMOTE: origin
           INSTALL: ${{ env.INSTALL }}
           BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
           CCACHE_DIR: ~/.ccache
@@ -105,7 +105,9 @@ jobs:
           time ./scripts/fast-build-amdgpu
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          KERNEL_DIR: /tmp/amdgpu-src
+          AMDGPU_REF: HEAD
+          AMDGPU_REMOTE: origin
           INSTALL: ${{ env.INSTALL }}
           BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
           CCACHE_DIR: ~/.ccache
@@ -122,7 +124,9 @@ jobs:
           time ./scripts/fast-build-amdgpu
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          KERNEL_DIR: /tmp/amdgpu-src
+          AMDGPU_REF: HEAD
+          AMDGPU_REMOTE: origin
           INSTALL: ${{ env.INSTALL }}
           BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
           PATCH_DIRS: ./patches/amdgpu-no-large-bar
@@ -140,7 +144,9 @@ jobs:
           time ./scripts/fast-build-amdgpu
         env:
           KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
+          KERNEL_DIR: /tmp/amdgpu-src
+          AMDGPU_REF: HEAD
+          AMDGPU_REMOTE: origin
           INSTALL: ${{ env.INSTALL }}
           BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
           PATCH_DIRS: ./patches/amdgpu-no-large-bar
