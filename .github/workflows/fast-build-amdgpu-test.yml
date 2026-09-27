@@ -87,14 +87,10 @@ jobs:
           AUTOCONF=/lib/modules/${{ steps.kver.outputs.kver }}/build/include/config/auto.conf
           if [ ! -f "${AUTOCONF}" ]; then
             echo "Creating auto.conf stub for ${{ steps.kver.outputs.kver }}"
-            sudo mkdir -p "$(dirname ${AUTOCONF})"
+            sudo mkdir -p "$(dirname "${AUTOCONF}")"
             # Minimal config needed by amd/dkms/Makefile checks:
-            sudo tee "${AUTOCONF}" > /dev/null <<'EOF'
-CONFIG_DRM=y
-CONFIG_KALLSYMS=y
-CONFIG_HSA_AMD=m
-CONFIG_HMM_MIRROR=y
-EOF
+            printf 'CONFIG_DRM=y\nCONFIG_KALLSYMS=y\nCONFIG_HSA_AMD=m\nCONFIG_HMM_MIRROR=y\n' \
+              | sudo tee "${AUTOCONF}" > /dev/null
           else
             grep "^CONFIG_DRM=" "${AUTOCONF}" || echo "auto.conf exists but CONFIG_DRM missing"
           fi
