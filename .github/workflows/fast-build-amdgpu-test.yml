@@ -78,6 +78,14 @@ jobs:
           git clone --depth=1 --branch ${AMDGPU_REF} \
             https://github.com/ROCm/amdgpu.git /tmp/amdgpu-src
 
+      - name: Debug kernel headers
+        run: |
+          echo "=== auto.conf CONFIG_DRM ==="
+          KVER=$(apt-cache search 'linux-headers-6\.8\.' | grep generic | sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
+          grep "^CONFIG_DRM=" /lib/modules/${KVER}/build/include/config/auto.conf || echo "CONFIG_DRM not found in auto.conf"
+          echo "=== Makefile head (BUILD_OUT would have this symlinked) ==="
+          ls -la /tmp/amdgpu-src/drivers/gpu/drm/amd/dkms/Makefile 2>/dev/null | head -2 || echo "not staged yet"
+
       - name: Cold fast-build (no patches)
         # Use KERNEL_DIR=/tmp/amdgpu-src (the full --depth=1 clone without
         # --filter) so git archive can read all blobs locally.  AMDGPU_REF=HEAD
