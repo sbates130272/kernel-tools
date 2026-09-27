@@ -43,7 +43,7 @@
 #      set have not changed since the last successful stage.
 #
 
-set -e
+set -eo pipefail
 
 KERNEL_DIR=${KERNEL_DIR:-./src}
 AMDGPU_REMOTE=${AMDGPU_REMOTE:-amdgpu}
@@ -415,12 +415,15 @@ run_build ()
     # Override module_build_dir so the amd/dkms/Makefile uses BUILD_SRC
     # directly instead of creating a fresh mktemp symlink.  Objects
     # accumulate here across runs — only changed .c files recompile.
+    info "make command: make -j${jobs} KERNELVER=${KERNEL_VER} module_build_dir=${BUILD_SRC} ${cc_flags}"
     # shellcheck disable=SC2086,SC2046
     eval make -j"${jobs}" \
         KERNELVER="${KERNEL_VER}" \
         module_build_dir="${BUILD_SRC}" \
         ${cc_flags} \
         2>&1 | tee "${BUILD_SRC}/build.log"
+    info ".ko files after build:"
+    find "${BUILD_SRC}" -name "*.ko" 2>/dev/null || true
 }
 
 install_modules ()
