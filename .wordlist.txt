@@ -91,7 +91,18 @@ automake
 bnxt
 bo
 bpf
+BuildKit
+TLS
+ZScaler
+args
+blockquote
+buildout
+buildx
 buf
+hcl
+ko
+recompiles
+relinks
 ccache
 cd
 config
@@ -103,6 +114,7 @@ debrpm
 desc
 devel
 dev
+dir
 devmem
 disassembler
 dkms
@@ -113,6 +125,7 @@ dri
 drm
 dmabuf
 dwarves
+env
 enp
 eth
 fd
@@ -137,6 +150,8 @@ insns
 io
 kfd
 knod
+kv
+KV
 iov
 li
 libbpf
@@ -152,6 +167,7 @@ md
 mellanox
 microsoft
 mlx
+mnt
 mv
 netdev
 netlink
@@ -167,14 +183,18 @@ pdma
 pmem
 pre
 ptr
+pwd
 regbuf
 repo
 ratelimited
 resizable
 riscv
+ro
+roc
 selftests
 rocm
 rpms
+rsync
 sbates
 scm
 serializes
@@ -188,6 +208,7 @@ struct
 sudo
 therock
 ttm
+ubuntu
 uapi
 ul
 XDP
@@ -195,6 +216,8 @@ xdp
 Yoo
 uname
 uring
+usr
+ver
 uring's
 Userspace
 userspace

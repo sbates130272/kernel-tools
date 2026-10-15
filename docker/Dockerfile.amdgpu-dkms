@@ -1,0 +1,92 @@
+# Dockerfile for amdgpu-dkms build acceleration.
+#
+# Builds against ubuntu:24.04 with an optional baked-in kernel headers
+# package (KERNEL_VER ARG).  BuildKit cache mounts keep apt state between
+# image rebuilds so a re-build after a Dockerfile edit takes ~3 s instead
+# of ~2 m.  ccache is pre-installed; a named volume at /ccache persists
+# the cache across container runs.
+#
+# The preferred build entry point is docker/amdgpu-dkms.hcl (buildx bake).
+# Use --builder default on AMD corporate networks — the remote
+# docker-container builder fails behind the ZScaler TLS proxy.
+#
+# Build image (single kernel):
+#   docker buildx bake --builder default \
+#     --set "amdgpu-dkms-build.args.KERNEL_VER=6.8.0-142-generic" \
+#     --load -f docker/amdgpu-dkms.hcl
+#
+# Build all kernel variants in parallel (see docker/amdgpu-dkms.hcl):
+#   docker buildx bake --builder default --load \
+#     --target all-kernels -f docker/amdgpu-dkms.hcl
+#
+# Fast incremental build (persistent .o + ccache volumes):
+#   KERNEL_VER=6.8.0-142-generic \
+#     BUILD_SRC=/usr/src/amdgpu-<ver> \
+#     HEADERS_IN_IMAGE=yes \
+#     INSTALL=no \
+#     ./scripts/docker-fast-build-amdgpu
+#
+# Traditional DKMS build (cold, for baseline comparison):
+#   KERNEL_VER=6.8.0-142-generic \
+#     BUILD_SRC=/usr/src/amdgpu-<ver> \
+#     INSTALL=no \
+#     ./scripts/build-amdgpu-dkms
+
+# syntax=docker/dockerfile:1.7
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# BuildKit cache mounts keep the apt lists and downloaded .deb files between
+# image rebuilds, so `docker buildx build` skips the network round-trips on
+# subsequent invocations even when a layer is invalidated.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y \
+    autoconf \
+    automake \
+    bc \
+    build-essential \
+    ccache \
+    dkms \
+    git \
+    kmod \
+    libelf-dev \
+    libssl-dev \
+    pkg-config \
+    rsync
+
+# Kernel headers are bind-mounted at runtime (not baked into the image) so
+# one image works across kernel versions.  The rq-offsets.h stub is created
+# at runtime by the build scripts when missing.
+# Override ARG to bake headers in (useful for CI where bind-mounts are unavailable):
+#   docker buildx build --build-arg KERNEL_VER=6.8.0-142-generic ...
+ARG KERNEL_VER=
+# Only install baked-in headers when KERNEL_VER is specified at build time.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    if [ -n "${KERNEL_VER}" ]; then \
+      apt-get update && \
+      apt-get install -y linux-headers-${KERNEL_VER} && \
+      touch /lib/modules/${KERNEL_VER}/build/include/generated/rq-offsets.h; \
+    fi
+
+# ccache configuration: store cache in /ccache (mount a named volume here).
+# Max cache size 10 GB — tune down with -e CCACHE_MAXSIZE=Xg if needed.
+ENV CCACHE_DIR=/ccache
+ENV CCACHE_MAXSIZE=10G
+ENV CCACHE_COMPRESS=1
+ENV CCACHE_COMPRESSLEVEL=6
+
+# Prepend ccache wrappers so every gcc/g++ invocation goes through ccache.
+# The kernel build system uses CC=gcc explicitly in many places, so we also
+# set CC in the environment so make picks it up unless overridden.
+ENV PATH="/usr/lib/ccache:${PATH}"
+ENV CC="ccache gcc"
+
+# Working directory for build artefacts (build dir persists in this volume).
+VOLUME ["/ccache", "/build"]
+
+WORKDIR /kernel-tools
+
+CMD ["/bin/bash"]
