@@ -7,6 +7,8 @@
 [![Userspace Build](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml)
 [![AMDGPU DKMS](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml)
 [![AMDGPU DKMS Matrix](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml)
+[![Fast Build AMDGPU](https://github.com/sbates130272/kernel-tools/actions/workflows/fast-build-amdgpu-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/fast-build-amdgpu-test.yml)
+[![Docker Fast Build AMDGPU](https://github.com/sbates130272/kernel-tools/actions/workflows/docker-fast-build-amdgpu-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/docker-fast-build-amdgpu-test.yml)
 [![Init Update](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml)
 [![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
 [![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
@@ -118,6 +120,149 @@ AMDGPU_BTF=1 KERNEL_VER=6.8.0-136-generic ./scripts/build-amdgpu-dkms
 | `MKDEB`         | `no`         | Set `yes` to produce a kernel-independent source `.deb` |
 | `FORCE`         | `no`         | Set `yes` to re-stage and rebuild                       |
 | `KERNEL_DIR`    | `./src`      | Path to kernel working tree                             |
+| `BUILD_SRC`     | *(empty)*    | Skip staging; use this pre-staged source directory      |
+
+### [fast-build-amdgpu](./scripts/fast-build-amdgpu)
+
+This [script](./scripts/fast-build-amdgpu) is a faster alternative to
+`build-amdgpu-dkms` for iterative patch development. DKMS rebuilds
+everything from scratch on every run (it creates a fresh build directory
+each time), which means even a single-line source change triggers a
+full multi-minute compile. `fast-build-amdgpu` bypasses DKMS and keeps
+a **persistent build output directory** across runs, so the kernel build
+system can reuse unchanged `.o` files. Combined with `ccache`, repeated
+builds after a small edit typically run 3–4× faster.
+
+Additional dependencies beyond `build-amdgpu-dkms`: `ccache`, `rsync`.
+
+```bash
+sudo apt install ccache rsync
+```
+
+#### Quick start
+
+Create two named Docker volumes (or local directories) for persistence:
+
+```bash
+docker volume create amdgpu-dkms-ccache
+docker volume create amdgpu-dkms-buildout
+```
+
+First build (cold — stages source, compiles everything, populates ccache):
+
+```bash
+KERNEL_VER=6.8.0-142-generic \
+  AMDGPU_REF=amdgpu/roc-7.2.x \
+  BUILD_OUT_BASE=./amdgpu-build-out \
+  INSTALL=no \
+  CCACHE_DIR=~/.ccache \
+  ./scripts/fast-build-amdgpu
+```
+
+Subsequent builds after editing a patch (only changed translation units
+recompile, everything else hits ccache):
+
+```bash
+KERNEL_VER=6.8.0-142-generic \
+  AMDGPU_REF=amdgpu/roc-7.2.x \
+  PATCH_DIRS=./patches/amdgpu-no-large-bar \
+  BUILD_OUT_BASE=./amdgpu-build-out \
+  INSTALL=no \
+  CCACHE_DIR=~/.ccache \
+  ./scripts/fast-build-amdgpu
+```
+
+When the patch set changes the script detects it via a hash file and
+re-syncs + re-stages automatically. Pass `FORCE=yes` to force a full
+re-sync and rebuild from scratch.
+
+#### Using a pre-staged source tree (skip git operations)
+
+Set `BUILD_SRC=<path>` to a writable copy of the staged source tree to
+skip the `git archive` extraction step entirely. This is useful in
+Docker containers where the git repository is not reachable:
+
+```bash
+# Mount a pre-staged source (e.g. from /usr/src/amdgpu-<ver>/)
+# and a persistent build-output volume.
+BUILD_SRC=/mnt/staged-ro \
+  KERNEL_VER=6.8.0-142-generic \
+  BUILD_OUT_BASE=/buildout \
+  INSTALL=no \
+  bash scripts/fast-build-amdgpu
+```
+
+#### Docker workflow
+
+The recommended way to use `fast-build-amdgpu` inside Docker is via the
+[`docker-fast-build-amdgpu`](./scripts/docker-fast-build-amdgpu) wrapper
+script, which manages named volumes, bind-mounts, and image selection
+automatically. It uses [`docker/amdgpu-dkms.hcl`](./docker/amdgpu-dkms.hcl)
+(a `docker buildx bake` file) to build the image with BuildKit apt cache
+mounts so image rebuilds are fast after the first pull.
+
+Build the image for a specific kernel (baked headers, fast subsequent rebuilds):
+
+```bash
+docker buildx bake --builder default \
+  --set "amdgpu-dkms-build.args.KERNEL_VER=6.8.0-142-generic" \
+  --load \
+  -f docker/amdgpu-dkms.hcl
+```
+
+> **Note for AMD corporate networks:** pass `--builder default` to use the
+> local Docker daemon's BuildKit. The remote `docker-container` builder
+> fails behind ZScaler due to TLS certificate interception.
+
+Run a fast incremental build inside Docker (first run stages source; subsequent
+runs reuse `.o` files and ccache from the named volumes):
+
+```bash
+KERNEL_VER=6.8.0-142-generic \
+  BUILD_SRC=/usr/src/amdgpu-amdgpu-roc-7.2.x-<sha> \
+  HEADERS_IN_IMAGE=yes \
+  INSTALL=no \
+  ./scripts/docker-fast-build-amdgpu
+```
+
+With patches:
+
+```bash
+KERNEL_VER=6.8.0-142-generic \
+  BUILD_SRC=/usr/src/amdgpu-amdgpu-roc-7.2.x-<sha> \
+  HEADERS_IN_IMAGE=yes \
+  PATCH_DIRS=./patches/amdgpu-no-large-bar \
+  INSTALL=no \
+  ./scripts/docker-fast-build-amdgpu
+```
+
+Set `FORCE=yes` to force a full re-sync and rebuild from scratch.
+
+#### Benchmark (roc-7.2.x, 6.8.0-142-generic, 32 cores, Docker container)
+
+| Scenario                                            | Wall time   |
+| --------------------------------------------------- | ----------- |
+| Cold build (empty ccache + buildout volumes)        | ~2m15s      |
+| Warm rebuild (identical source, hot ccache + .o)    | **~4.6s**   |
+| Single-file incremental (one `.c` touched)          | **~11s**    |
+| Patched build (`FORCE=yes`, re-sync + patch apply)  | ~2m20s      |
+| Same patches, second run                            | **~4.6s**   |
+
+The warm path skips rsync, `pre-build.sh`, and `configure` entirely —
+only the kernel build-system check runs (effectively a no-op when no
+sources changed). The incremental path recompiles only the touched
+translation unit via ccache lookup, then relinks the `.ko`.
+
+| Variable         | Default              | Description                                    |
+| ---------------- | -------------------- | ---------------------------------------------- |
+| `KERNEL_VER`     | *(required)*         | Target kernel version                          |
+| `BUILD_OUT_BASE` | `./amdgpu-build-out` | Persistent build output directory              |
+| `BUILD_SRC`      | *(empty)*            | Pre-staged source dir; skip git operations     |
+| `AMDGPU_REF`     | `master`             | Branch or tag (unused when `BUILD_SRC` is set) |
+| `PATCH_DIRS`     | *(empty)*            | Colon-separated patch directories              |
+| `INSTALL`        | `yes`                | Set `no` to skip install                       |
+| `FORCE`          | `no`                 | Set `yes` to re-sync and rebuild from scratch  |
+| `CCACHE_DIR`     | *(env)*              | ccache cache directory                         |
 
 ### [build-remote](./scripts/build-remote)
 
