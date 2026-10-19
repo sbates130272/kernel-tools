@@ -1,8 +1,13 @@
 name: dmabuf-vm-test
 
-# Full end-to-end VM test is too slow (~30 min kernel build) for every PR.
-# Trigger manually via workflow_dispatch, or on pushes to branches that touch
-# the DMA-BUF scripts and configs.
+# Boots a real KVM-accelerated QEMU VM with one emulated NVMe device, runs
+# scripts/build-remote to install the DMA-BUF kernel (Anuj Gupta's
+# fs-dmabuf-rfc-v11-desc-v2 branch: io_uring v11 + iomap/XFS support), then
+# verifies the expected config knobs and NVMe device are present.
+#
+# The kernel build takes ~30 minutes; trigger manually or on pushes that
+# touch the DMA-BUF-related files.
+
 on:
   workflow_dispatch:
   push:
@@ -15,94 +20,200 @@ on:
       - 'config-scripts/config-default'
       - 'useful-configs/config-x86_64-p2pdma-qemu'
       - 'userspace/amdgpu-dmabuf-io/**'
+      - '.github/workflows/dmabuf-vm-test.yml'
+
+env:
+  VM_IMAGES_DIR: /var/lib/qemu-tool/images
+  VM_NAME: dmabuf-test
+  VM_SSH_PORT: 2222
+  KERNEL_REMOTE: https://github.com/anuj7781/linux-kernel
+  KERNEL_BRANCH: anuj/fs-dmabuf-rfc-v11-desc-v2
+  LABEL: -dmabuf-v11-fs
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  dmabuf-vm-config-test:
-    name: dmabuf-vm-config-test
-    runs-on: ubuntu-24.04
+  dmabuf-vm-test:
+    name: dmabuf-vm-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261007.g677e113-qemu11.1.2-vfu.8039244
+      options: --device /dev/kvm
 
     steps:
       - name: Check out kernel-tools
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v4.3.1
 
       - name: Fix git warning
         run: git config --global init.defaultBranch main
 
-      - name: Install qemu-tool and kernel build dependencies
+      - name: Verify KVM is available
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          test -c /dev/kvm || { echo "::error::/dev/kvm missing"; exit 1; }
+          python3 -c "import os, fcntl; fcntl.ioctl(os.open('/dev/kvm', os.O_RDWR), 0xAE00, 0)" \
+            || { echo "::error::/dev/kvm present but KVM_GET_API_VERSION failed"; exit 1; }
+          echo "KVM available: $(ls -l /dev/kvm)"
+
+      - name: Install kernel build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y \
             bison \
             build-essential \
-            cloud-image-utils \
             flex \
             libelf-dev \
             libncurses-dev \
             libssl-dev \
             nasm \
-            ovmf \
-            pahole \
-            qemu-system-x86 \
-            qemu-utils
-          pip install qemu-tool
+            pahole
 
-      - name: Clone the DMA-BUF kernel source (depth 1)
+      - name: Generate SSH key-pair
         run: |
-          git clone --depth 1 \
-            https://github.com/anuj7781/linux-kernel \
-            -b anuj/fs-dmabuf-rfc-v11-desc-v2 \
-            ./src
+          mkdir -p "$HOME/.ssh"
+          ssh-keygen -t ed25519 -q -f "$HOME/.ssh/id_ed25519" -N ""
+          [ "$HOME" = /root ] || { rm -rf /root/.ssh && ln -s "$HOME/.ssh" /root/.ssh; }
 
-      - name: Generate a base config from the DMA-BUF kernel tree
-        run: make defconfig && mv .config test-config
-        working-directory: ./src
+      - name: Install qemu-tool
+        run: pip install --break-system-packages qemu-tool
 
-      # Use qemu-tool gen-vm in dry-run-equivalent mode: build the cloud-init
-      # seed and overlay, but do not start QEMU.  We validate the image is
-      # created successfully and that the build-remote config step applies the
-      # expected knobs, without incurring the cost of booting a VM or
-      # compiling the kernel.
+      - name: Cache cloud image
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VM_IMAGES_DIR }}/*-server-cloudimg-*.img
+          key: cloud-img-amd64-noble-dmabuf
+
+      - name: Ensure images directory exists
+        run: mkdir -p "$VM_IMAGES_DIR" && chmod 777 "$VM_IMAGES_DIR"
+
       - name: Generate VM image with qemu-tool gen-vm
-        run: |
-          mkdir -p /tmp/qemu-images
-          # Download the Ubuntu cloud image (noble; resolute not yet on runners)
-          wget -q -O /tmp/qemu-images/noble-server-cloudimg-amd64.img \
-            https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
-          # Generate the VM overlay + cloud-init seed.
-          # We inject the runner's own key so the SSH alias step has something
-          # to reference; --force rebuilds if the image already exists.
-          ssh-keygen -t ed25519 -N '' -f ~/.ssh/id_ed25519 -q || true
-          qemu-tool gen-vm \
-            --vm-name    dmabuf-ci \
-            --images     /tmp/qemu-images \
-            --vcpus      2 \
-            --vmem       2048 \
-            --ssh-port   2222 \
-            --release    noble \
-            --ssh-key-file ~/.ssh/id_ed25519.pub \
-            --backing-file /tmp/qemu-images/noble-server-cloudimg-amd64.img \
-            --force
+        uses: sbates130272/qemu-tool-action@v1
+        with:
+          operation: gen-vm
+          vm-name: ${{ env.VM_NAME }}
+          images-dir: ${{ env.VM_IMAGES_DIR }}
+          release: noble
+          ssh-key-file: ${{ env.HOME }}/.ssh/id_ed25519.pub
+          extra-args: --vcpus 4 --vmem 4096 --ssh-port ${{ env.VM_SSH_PORT }} --force
 
-      - name: Run build-remote config step only (NO_BUILD NO_INSTALL)
+      - name: Start VM with one emulated NVMe device
         run: |
-          # build-remote must run from inside the kernel source tree.
-          # In localhost mode it uses the local .config (test-config) rather
-          # than SSH-fetching from a real VM.
-          cp test-config src/test-config
+          qemu-tool run-vm \
+            --vm-name  "$VM_NAME" \
+            --images   "$VM_IMAGES_DIR" \
+            --ssh-port "$VM_SSH_PORT" \
+            --nvme     1 \
+            > /tmp/run-vm.log 2>&1 &
+          echo "QEMU started in background"
+
+      - name: Wait for VM SSH (180s)
+        run: |
+          elapsed=0
+          while [ $elapsed -lt 180 ]; do
+            if ssh -i "$HOME/.ssh/id_ed25519" \
+                   -o ConnectTimeout=2 \
+                   -o BatchMode=yes \
+                   -o StrictHostKeyChecking=no \
+                   -o UserKnownHostsFile=/dev/null \
+                   -p "$VM_SSH_PORT" ubuntu@localhost true 2>/dev/null; then
+              echo "VM ready after ${elapsed}s"
+              exit 0
+            fi
+            sleep 3; elapsed=$((elapsed + 3))
+          done
+          echo "::error::VM did not respond on SSH within 180s"
+          cat /tmp/run-vm.log
+          exit 1
+
+      - name: Verify NVMe device is present in stock kernel
+        run: |
+          ssh -i "$HOME/.ssh/id_ed25519" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p "$VM_SSH_PORT" ubuntu@localhost \
+              "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
+          echo "NVMe device confirmed in guest"
+
+      - name: Add SSH config alias for the VM
+        run: |
+          cat >> "$HOME/.ssh/config" <<EOF
+
+          Host $VM_NAME
+              HostName localhost
+              Port $VM_SSH_PORT
+              User ubuntu
+              IdentityFile $HOME/.ssh/id_ed25519
+              StrictHostKeyChecking no
+              UserKnownHostsFile /dev/null
+          EOF
+          chmod 600 "$HOME/.ssh/config"
+
+      - name: Clone DMA-BUF kernel source (depth 1)
+        run: |
+          git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
+
+      - name: Fetch VM boot config for build-remote
+        run: |
+          # build-remote fetches /boot/<CONFIG> from the remote via scp.
+          REMOTE_UNAME=$(ssh "$VM_NAME" uname -r)
+          echo "VM_CONFIG=config-${REMOTE_UNAME}" >> "$GITHUB_ENV"
+          echo "Remote uname: $REMOTE_UNAME"
+
+      - name: Run build-remote (full kernel build + install into VM)
+        run: |
           cd src
-          REMOTE_NAME=localhost \
-          CONFIG=test-config \
+          REMOTE_NAME="$VM_NAME" \
+          CONFIG="$VM_CONFIG" \
           CONFIG_SCRIPT=default \
-          NO_BUILD=true \
-          NO_INSTALL=true \
-          LABEL=-dmabuf-ci \
+          LABEL="$LABEL" \
             ../scripts/build-remote
 
-      - name: Verify config knobs applied by config-default
+      # build-remote reboots the VM as its last step; wait for it to come back.
+      - name: Wait for VM to reboot (240s)
         run: |
-          grep CONFIG_BLK_DEV_NVME src/.config
-          grep CONFIG_NVME_CORE    src/.config
-          grep CONFIG_9P_FS        src/.config
+          sleep 15
+          elapsed=0
+          while [ $elapsed -lt 240 ]; do
+            if ssh -i "$HOME/.ssh/id_ed25519" \
+                   -o ConnectTimeout=2 \
+                   -o BatchMode=yes \
+                   -o StrictHostKeyChecking=no \
+                   -o UserKnownHostsFile=/dev/null \
+                   -p "$VM_SSH_PORT" ubuntu@localhost true 2>/dev/null; then
+              echo "VM back after ${elapsed}s"
+              exit 0
+            fi
+            sleep 5; elapsed=$((elapsed + 5))
+          done
+          echo "::error::VM did not come back after reboot within 240s"
+          exit 1
 
-      - name: Verify XFS is enabled in the DMA-BUF kernel config
-        run: grep CONFIG_XFS_FS src/.config
+      - name: Verify DMA-BUF kernel is running
+        run: |
+          UNAME=$(ssh -i "$HOME/.ssh/id_ed25519" \
+                      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                      -p "$VM_SSH_PORT" ubuntu@localhost \
+                      "uname -r")
+          echo "Kernel: $UNAME"
+          echo "$UNAME" | grep -q "${LABEL#-}" \
+            || echo "::warning::label '${LABEL}' not found in uname '$UNAME' — may have booted old kernel"
+
+      - name: Verify DMA-BUF config knobs present
+        run: |
+          ssh -i "$HOME/.ssh/id_ed25519" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p "$VM_SSH_PORT" ubuntu@localhost \
+              "zgrep -E 'CONFIG_(XFS_FS|BLK_DEV_NVME|NVME_CORE|9P_FS)' /boot/config-\$(uname -r)"
+
+      - name: Verify NVMe device still present after kernel change
+        run: |
+          ssh -i "$HOME/.ssh/id_ed25519" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p "$VM_SSH_PORT" ubuntu@localhost \
+              "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
+          echo "NVMe device confirmed after kernel install"
+
+      - name: Print run-vm log on failure
+        if: failure()
+        run: cat /tmp/run-vm.log || true
