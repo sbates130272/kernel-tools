@@ -30,7 +30,7 @@ env:
   # Pre-baked ernic-rocjitsu qcow2 — carries a full resolute Ubuntu guest with
   # kernel build dependencies already installed. Update the tag here when a
   # newer bake is published from qemu-minimal's report-for-vm-ernic workflow.
-  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261007.g677e113-vm.resolute-ernic-rocjitsu-qm.a76e881-qcow2
+  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261016.g9ef1ed8-vm.resolute-ernic-rocjitsu-qm.c5d51ce-qcow2
   KERNEL_REMOTE: https://github.com/anuj7781/linux-kernel
   KERNEL_BRANCH: anuj/fs-dmabuf-rfc-v11-desc-v2
   LABEL: -dmabuf-v11-fs
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261007.g677e113-qemu11.1.2-vfu.8039244
+      image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261016.g9ef1ed8-qemu11.1.2-vfu.8039244
       options: --device /dev/kvm
 
     steps:
