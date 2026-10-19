@@ -69,6 +69,7 @@ jobs:
             bison \
             build-essential \
             flex \
+            libdw-dev \
             libelf-dev \
             libncurses-dev \
             libssl-dev \
