@@ -1,13 +1,15 @@
 name: dmabuf-vm-test
 
-# Boots a KVM-accelerated QEMU VM using the pre-baked ernic-rocjitsu qcow2
-# as the base image (skipping gen-vm cloud-init bake), attaches one emulated
-# NVMe device, then installs the DMA-BUF kernel (Anuj Gupta's
-# fs-dmabuf-rfc-v11-desc-v2: io_uring v11 + iomap/XFS) via build-remote and
-# verifies the expected config knobs and NVMe device survive the kernel change.
+# Two-job pipeline:
 #
-# Triggered manually or on pushes to branches touching DMA-BUF-related paths.
-# The kernel build takes ~30 minutes; not gated on every PR to main.
+#   build-kernel  — plain ubuntu-latest runner, builds the DMA-BUF kernel
+#                   tarball using the same package list as build-remote-test.
+#   test-vm       — QEMU container with KVM, boots the ernic-rocjitsu qcow2
+#                   with one emulated NVMe, installs the tarball from job 1,
+#                   reboots, and verifies config knobs + NVMe device.
+#
+# Splitting the jobs means the QEMU container never needs kernel build tools
+# and the kernel build runner never needs QEMU or KVM.
 
 on:
   workflow_dispatch:
@@ -24,29 +26,26 @@ on:
       - '.github/workflows/dmabuf-vm-test.yml'
 
 env:
-  VM_IMAGES_DIR: /var/lib/qemu-tool/images
-  VM_NAME: dmabuf-test
-  VM_SSH_PORT: 2222
-  # Pre-baked ernic-rocjitsu qcow2 — carries a full resolute Ubuntu guest with
-  # kernel build dependencies already installed. Update the tag here when a
-  # newer bake is published from qemu-minimal's report-for-vm-ernic workflow.
-  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261016.g9ef1ed8-vm.resolute-ernic-rocjitsu-qm.c5d51ce-qcow2
   KERNEL_REMOTE: https://github.com/anuj7781/linux-kernel
   KERNEL_BRANCH: anuj/fs-dmabuf-rfc-v11-desc-v2
   LABEL: -dmabuf-v11-fs
+  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261016.g9ef1ed8-vm.resolute-ernic-rocjitsu-qm.c5d51ce-qcow2
+  VM_NAME: dmabuf-test
+  VM_SSH_PORT: 2222
+  VM_IMAGES_DIR: /var/lib/qemu-tool/images
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  dmabuf-vm-test:
-    name: dmabuf-vm-test
+  # ---------------------------------------------------------------------------
+  # Job 1: build the DMA-BUF kernel tarball on a plain runner
+  # ---------------------------------------------------------------------------
+  build-kernel:
+    name: build-kernel
     runs-on: ubuntu-latest
-    timeout-minutes: 90
-    container:
-      image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261016.g9ef1ed8-qemu11.1.2-vfu.8039244
-      options: --device /dev/kvm
+    timeout-minutes: 60
 
     steps:
       - name: Check out kernel-tools
@@ -55,17 +54,10 @@ jobs:
       - name: Fix git warning
         run: git config --global init.defaultBranch main
 
-      - name: Verify KVM is available
+      - name: Install packages needed to build the linux kernel
         run: |
-          test -c /dev/kvm || { echo "::error::/dev/kvm missing"; exit 1; }
-          python3 -c "import os, fcntl; fcntl.ioctl(os.open('/dev/kvm', os.O_RDWR), 0xAE00, 0)" \
-            || { echo "::error::/dev/kvm present but KVM_GET_API_VERSION failed"; exit 1; }
-          echo "KVM available: $(ls -l /dev/kvm)"
-
-      - name: Install kernel build dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y \
+          sudo apt-get update
+          sudo apt-get install -y \
             bc \
             bison \
             build-essential \
@@ -76,6 +68,54 @@ jobs:
             libssl-dev \
             nasm \
             pahole
+
+      - name: Clone DMA-BUF kernel source (depth 1)
+        run: git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
+
+      - name: Generate config and build kernel tarball
+        run: |
+          cd src
+          make defconfig
+          # Apply the same config-default fragment that build-remote uses so
+          # the built kernel matches what would be installed via build-remote.
+          source ../config-scripts/config-default
+          scripts/config --disable DEBUG_INFO
+          make olddefconfig
+          scripts/config --enable LOCALVERSION_AUTO
+          scripts/config --set-str LOCALVERSION "$LABEL"
+          make olddefconfig
+          # shellcheck disable=SC2046
+          make -j $(nproc) targz-pkg
+
+      - name: Upload kernel tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmabuf-kernel-tarball
+          path: src/linux-*.tar.gz
+          retention-days: 1
+
+  # ---------------------------------------------------------------------------
+  # Job 2: boot the VM, install the tarball, verify
+  # ---------------------------------------------------------------------------
+  test-vm:
+    name: test-vm
+    needs: build-kernel
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261016.g9ef1ed8-qemu11.1.2-vfu.8039244
+      options: --device /dev/kvm
+
+    steps:
+      - name: Check out kernel-tools
+        uses: actions/checkout@v4.3.1
+
+      - name: Verify KVM is available
+        run: |
+          test -c /dev/kvm || { echo "::error::/dev/kvm missing"; exit 1; }
+          python3 -c "import os, fcntl; fcntl.ioctl(os.open('/dev/kvm', os.O_RDWR), 0xAE00, 0)" \
+            || { echo "::error::/dev/kvm present but KVM_GET_API_VERSION failed"; exit 1; }
+          echo "KVM available: $(ls -l /dev/kvm)"
 
       - name: Use a fixed pip cache directory
         run: echo "PIP_CACHE_DIR=/var/cache/pip-ci" >> "$GITHUB_ENV"
@@ -89,10 +129,12 @@ jobs:
       - name: Install qemu-tool
         run: pip install --break-system-packages qemu-tool
 
-      # Extract the SSH private key baked into the qcow2 from its OCI
-      # vm-info referrer. The ernic-rocjitsu image carries its own key-pair;
-      # we must use that key, not a freshly generated one, because there is no
-      # cloud-init bake to inject ours.
+      - name: Download kernel tarball from build-kernel job
+        uses: actions/download-artifact@v4
+        with:
+          name: dmabuf-kernel-tarball
+          path: /tmp/kernel-tarball
+
       - name: Fetch VM SSH keys from OCI metadata
         shell: bash
         run: |
@@ -106,7 +148,6 @@ jobs:
           manifest = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/manifest.json"))
           discover = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/referrers.json"))
           referrers = discover.get("manifests", discover.get("referrers", []))
-          annotations = manifest.get("annotations") or {}
           for ref in referrers:
               if ref.get("artifactType") == "application/vnd.batesste.vm-info.v1":
                   print(ref["digest"])
@@ -119,7 +160,7 @@ jobs:
           oras pull --output "$meta_dir" "${QCOW2_IMAGE%:*}@${ref_digest}"
 
           python3 - <<'PY'
-          import json, base64, os
+          import json, os
           from pathlib import Path
           info = json.loads(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/vm-info.json").read_text())
           home = Path(os.environ["HOME"])
@@ -134,11 +175,8 @@ jobs:
           print(f"SSH key extracted for user '{username}'")
           PY
 
-          # ssh(1) expands ~ from passwd, not $HOME in containers running as root
           [ "$HOME" = /root ] || { rm -rf /root/.ssh && ln -s "$HOME/.ssh" /root/.ssh; }
 
-      # Cache the qcow2 blob keyed on the image tag (manifest digest would be
-      # ideal but the tag is stable enough and simpler to key on).
       - name: Compute qcow2 cache key
         id: qcow2-key
         run: |
@@ -212,37 +250,20 @@ jobs:
               "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
           echo "NVMe device confirmed"
 
-      - name: Add SSH config alias for build-remote
+      - name: Copy kernel tarball into VM and install
         run: |
-          cat >> "$HOME/.ssh/config" <<EOF
-
-          Host $VM_NAME
-              HostName localhost
-              Port $VM_SSH_PORT
-              User $VM_USERNAME
-              IdentityFile $HOME/.ssh/id_rsa
-              StrictHostKeyChecking no
-              UserKnownHostsFile /dev/null
-          EOF
-          chmod 600 "$HOME/.ssh/config"
-
-      - name: Clone DMA-BUF kernel source (depth 1)
-        run: git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
-
-      - name: Fetch VM boot config for build-remote
-        run: |
-          REMOTE_UNAME=$(ssh "$VM_NAME" uname -r)
-          echo "VM_CONFIG=config-${REMOTE_UNAME}" >> "$GITHUB_ENV"
-          echo "Remote uname: $REMOTE_UNAME"
-
-      - name: Run build-remote (kernel build + install into VM)
-        run: |
-          cd src
-          REMOTE_NAME="$VM_NAME" \
-          CONFIG="$VM_CONFIG" \
-          CONFIG_SCRIPT=default \
-          LABEL="$LABEL" \
-            ../scripts/build-remote
+          TARBALL=$(ls /tmp/kernel-tarball/linux-*.tar.gz)
+          scp -i "$HOME/.ssh/id_rsa" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -P "$VM_SSH_PORT" \
+              "$TARBALL" "$VM_USERNAME@localhost:/tmp/kernel.tar.gz"
+          ssh -i "$HOME/.ssh/id_rsa" \
+              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
+              "sudo tar -C / --exclude=vmlinux-* -xhf /tmp/kernel.tar.gz && \
+               sudo update-initramfs -c -k \$(ls /lib/modules/ | tail -1) && \
+               sudo update-grub && \
+               sudo reboot now" || true
 
       - name: Wait for VM to reboot (240s)
         run: |
