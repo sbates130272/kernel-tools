@@ -1,12 +1,13 @@
 name: dmabuf-vm-test
 
-# Boots a real KVM-accelerated QEMU VM with one emulated NVMe device, runs
-# scripts/build-remote to install the DMA-BUF kernel (Anuj Gupta's
-# fs-dmabuf-rfc-v11-desc-v2 branch: io_uring v11 + iomap/XFS support), then
-# verifies the expected config knobs and NVMe device are present.
+# Boots a KVM-accelerated QEMU VM using the pre-baked ernic-rocjitsu qcow2
+# as the base image (skipping gen-vm cloud-init bake), attaches one emulated
+# NVMe device, then installs the DMA-BUF kernel (Anuj Gupta's
+# fs-dmabuf-rfc-v11-desc-v2: io_uring v11 + iomap/XFS) via build-remote and
+# verifies the expected config knobs and NVMe device survive the kernel change.
 #
-# The kernel build takes ~30 minutes; trigger manually or on pushes that
-# touch the DMA-BUF-related files.
+# Triggered manually or on pushes to branches touching DMA-BUF-related paths.
+# The kernel build takes ~30 minutes; not gated on every PR to main.
 
 on:
   workflow_dispatch:
@@ -26,6 +27,10 @@ env:
   VM_IMAGES_DIR: /var/lib/qemu-tool/images
   VM_NAME: dmabuf-test
   VM_SSH_PORT: 2222
+  # Pre-baked ernic-rocjitsu qcow2 — carries a full resolute Ubuntu guest with
+  # kernel build dependencies already installed. Update the tag here when a
+  # newer bake is published from qemu-minimal's report-for-vm-ernic workflow.
+  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261007.g677e113-vm.resolute-ernic-rocjitsu-qm.a76e881-qcow2
   KERNEL_REMOTE: https://github.com/anuj7781/linux-kernel
   KERNEL_BRANCH: anuj/fs-dmabuf-rfc-v11-desc-v2
   LABEL: -dmabuf-v11-fs
@@ -70,33 +75,105 @@ jobs:
             nasm \
             pahole
 
-      - name: Generate SSH key-pair
-        run: |
-          mkdir -p "$HOME/.ssh"
-          ssh-keygen -t ed25519 -q -f "$HOME/.ssh/id_ed25519" -N ""
-          [ "$HOME" = /root ] || { rm -rf /root/.ssh && ln -s "$HOME/.ssh" /root/.ssh; }
+      - name: Use a fixed pip cache directory
+        run: echo "PIP_CACHE_DIR=/var/cache/pip-ci" >> "$GITHUB_ENV"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/pip-ci
+          key: pip-qemu-tool-v2
 
       - name: Install qemu-tool
         run: pip install --break-system-packages qemu-tool
 
-      - name: Cache cloud image
+      # Extract the SSH private key baked into the qcow2 from its OCI
+      # vm-info referrer. The ernic-rocjitsu image carries its own key-pair;
+      # we must use that key, not a freshly generated one, because there is no
+      # cloud-init bake to inject ours.
+      - name: Fetch VM SSH keys from OCI metadata
+        run: |
+          set -euo pipefail
+          mkdir -p "$VM_IMAGES_DIR/.oras-meta" "$HOME/.ssh"
+          oras manifest fetch "$QCOW2_IMAGE" > "$VM_IMAGES_DIR/.oras-meta/manifest.json"
+          oras discover --format json "$QCOW2_IMAGE" > "$VM_IMAGES_DIR/.oras-meta/referrers.json"
+
+          ref_digest=$(python3 - <<'PY'
+          import json, os
+          manifest = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/manifest.json"))
+          discover = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/referrers.json"))
+          referrers = discover.get("manifests", discover.get("referrers", []))
+          annotations = manifest.get("annotations") or {}
+          for ref in referrers:
+              if ref.get("artifactType") == "application/vnd.batesste.vm-info.v1":
+                  print(ref["digest"])
+                  break
+          PY
+          )
+
+          meta_dir="$VM_IMAGES_DIR/.oras-meta/vm-info"
+          mkdir -p "$meta_dir"
+          oras pull --output "$meta_dir" "${QCOW2_IMAGE%:*}@${ref_digest}"
+
+          python3 - <<'PY'
+          import json, base64, os
+          from pathlib import Path
+          info = json.loads(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/vm-info.json").read_text())
+          home = Path(os.environ["HOME"])
+          keys = info.get("ssh_keys") or {}
+          priv = Path(keys.get("private_key_path", "/output/id_rsa")).name
+          pub  = Path(keys.get("public_key_path",  "/output/id_rsa.pub")).name
+          (home / ".ssh" / "id_rsa").write_bytes(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/{priv}").read_bytes())
+          (home / ".ssh" / "id_rsa").chmod(0o600)
+          (home / ".ssh" / "id_rsa.pub").write_bytes(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/{pub}").read_bytes())
+          username = info.get("username", "ubuntu")
+          Path(os.environ["GITHUB_ENV"]).open("a").write(f"VM_USERNAME={username}\n")
+          print(f"SSH key extracted for user '{username}'")
+          PY
+
+          # ssh(1) expands ~ from passwd, not $HOME in containers running as root
+          [ "$HOME" = /root ] || { rm -rf /root/.ssh && ln -s "$HOME/.ssh" /root/.ssh; }
+
+      # Cache the qcow2 blob keyed on the image tag (manifest digest would be
+      # ideal but the tag is stable enough and simpler to key on).
+      - name: Compute qcow2 cache key
+        id: qcow2-key
+        run: |
+          digest=$(python3 -c "
+          import json, hashlib, pathlib
+          m = json.loads(pathlib.Path('$VM_IMAGES_DIR/.oras-meta/manifest.json').read_text())
+          raw = json.dumps(m, sort_keys=True, separators=(',',':'))
+          print(hashlib.sha256(raw.encode()).hexdigest()[:16])
+          ")
+          echo "key=qcow2-${digest}" >> "$GITHUB_OUTPUT"
+
+      - name: Cache qcow2 backing image
+        id: qcow2-cache
         uses: actions/cache@v4
         with:
-          path: ${{ env.VM_IMAGES_DIR }}/*-server-cloudimg-*.img
-          key: cloud-img-amd64-noble-dmabuf
+          path: ${{ github.workspace }}/qcow2-cache/${{ env.VM_NAME }}-backing.qcow2
+          key: ${{ steps.qcow2-key.outputs.key }}
 
-      - name: Ensure images directory exists
-        run: mkdir -p "$VM_IMAGES_DIR" && chmod 777 "$VM_IMAGES_DIR"
+      - name: Download and decompress qcow2 blob
+        if: steps.qcow2-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/qcow2-cache"
+          tmp=$(mktemp -d)
+          cd "$tmp"
+          oras pull "$QCOW2_IMAGE"
+          zstd -d --long=27 --rm ./*.qcow2.zst
+          mv ./*.qcow2 "$GITHUB_WORKSPACE/qcow2-cache/$VM_NAME-backing.qcow2"
 
-      - name: Generate VM image with qemu-tool gen-vm
-        uses: sbates130272/qemu-tool-action@v1
-        with:
-          operation: gen-vm
-          vm-name: ${{ env.VM_NAME }}
-          images-dir: ${{ env.VM_IMAGES_DIR }}
-          release: noble
-          ssh-key-file: ${{ env.HOME }}/.ssh/id_ed25519.pub
-          extra-args: --vcpus 4 --vmem 4096 --ssh-port ${{ env.VM_SSH_PORT }} --force
+      - name: Create qcow2 overlay
+        run: |
+          mkdir -p "$VM_IMAGES_DIR"
+          cp "$GITHUB_WORKSPACE/qcow2-cache/$VM_NAME-backing.qcow2" \
+             "$VM_IMAGES_DIR/$VM_NAME-backing.qcow2"
+          rm -f "$VM_IMAGES_DIR/$VM_NAME.qcow2"
+          qemu-img create -F qcow2 \
+            -b "$VM_IMAGES_DIR/$VM_NAME-backing.qcow2" \
+            -f qcow2 "$VM_IMAGES_DIR/$VM_NAME.qcow2"
 
       - name: Start VM with one emulated NVMe device
         run: |
@@ -112,55 +189,49 @@ jobs:
         run: |
           elapsed=0
           while [ $elapsed -lt 180 ]; do
-            if ssh -i "$HOME/.ssh/id_ed25519" \
-                   -o ConnectTimeout=2 \
-                   -o BatchMode=yes \
-                   -o StrictHostKeyChecking=no \
-                   -o UserKnownHostsFile=/dev/null \
-                   -p "$VM_SSH_PORT" ubuntu@localhost true 2>/dev/null; then
-              echo "VM ready after ${elapsed}s"
-              exit 0
+            if ssh -i "$HOME/.ssh/id_rsa" \
+                   -o ConnectTimeout=2 -o BatchMode=yes \
+                   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" true 2>/dev/null; then
+              echo "VM ready after ${elapsed}s"; exit 0
             fi
             sleep 3; elapsed=$((elapsed + 3))
           done
           echo "::error::VM did not respond on SSH within 180s"
-          cat /tmp/run-vm.log
-          exit 1
+          cat /tmp/run-vm.log; exit 1
 
-      - name: Verify NVMe device is present in stock kernel
+      - name: Verify NVMe device present in stock kernel
         run: |
-          ssh -i "$HOME/.ssh/id_ed25519" \
+          ssh -i "$HOME/.ssh/id_rsa" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" ubuntu@localhost \
+              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
               "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
-          echo "NVMe device confirmed in guest"
+          echo "NVMe device confirmed"
 
-      - name: Add SSH config alias for the VM
+      - name: Add SSH config alias for build-remote
         run: |
           cat >> "$HOME/.ssh/config" <<EOF
 
           Host $VM_NAME
               HostName localhost
               Port $VM_SSH_PORT
-              User ubuntu
-              IdentityFile $HOME/.ssh/id_ed25519
+              User $VM_USERNAME
+              IdentityFile $HOME/.ssh/id_rsa
               StrictHostKeyChecking no
               UserKnownHostsFile /dev/null
           EOF
           chmod 600 "$HOME/.ssh/config"
 
       - name: Clone DMA-BUF kernel source (depth 1)
-        run: |
-          git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
+        run: git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
 
       - name: Fetch VM boot config for build-remote
         run: |
-          # build-remote fetches /boot/<CONFIG> from the remote via scp.
           REMOTE_UNAME=$(ssh "$VM_NAME" uname -r)
           echo "VM_CONFIG=config-${REMOTE_UNAME}" >> "$GITHUB_ENV"
           echo "Remote uname: $REMOTE_UNAME"
 
-      - name: Run build-remote (full kernel build + install into VM)
+      - name: Run build-remote (kernel build + install into VM)
         run: |
           cd src
           REMOTE_NAME="$VM_NAME" \
@@ -169,48 +240,43 @@ jobs:
           LABEL="$LABEL" \
             ../scripts/build-remote
 
-      # build-remote reboots the VM as its last step; wait for it to come back.
       - name: Wait for VM to reboot (240s)
         run: |
           sleep 15
           elapsed=0
           while [ $elapsed -lt 240 ]; do
-            if ssh -i "$HOME/.ssh/id_ed25519" \
-                   -o ConnectTimeout=2 \
-                   -o BatchMode=yes \
-                   -o StrictHostKeyChecking=no \
-                   -o UserKnownHostsFile=/dev/null \
-                   -p "$VM_SSH_PORT" ubuntu@localhost true 2>/dev/null; then
-              echo "VM back after ${elapsed}s"
-              exit 0
+            if ssh -i "$HOME/.ssh/id_rsa" \
+                   -o ConnectTimeout=2 -o BatchMode=yes \
+                   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                   -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" true 2>/dev/null; then
+              echo "VM back after ${elapsed}s"; exit 0
             fi
             sleep 5; elapsed=$((elapsed + 5))
           done
-          echo "::error::VM did not come back after reboot within 240s"
-          exit 1
+          echo "::error::VM did not come back after reboot within 240s"; exit 1
 
       - name: Verify DMA-BUF kernel is running
         run: |
-          UNAME=$(ssh -i "$HOME/.ssh/id_ed25519" \
+          UNAME=$(ssh -i "$HOME/.ssh/id_rsa" \
                       -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                      -p "$VM_SSH_PORT" ubuntu@localhost \
+                      -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
                       "uname -r")
           echo "Kernel: $UNAME"
           echo "$UNAME" | grep -q "${LABEL#-}" \
-            || echo "::warning::label '${LABEL}' not found in uname '$UNAME' — may have booted old kernel"
+            || echo "::warning::label '${LABEL}' not in uname '$UNAME' — may have booted old kernel"
 
       - name: Verify DMA-BUF config knobs present
         run: |
-          ssh -i "$HOME/.ssh/id_ed25519" \
+          ssh -i "$HOME/.ssh/id_rsa" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" ubuntu@localhost \
+              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
               "zgrep -E 'CONFIG_(XFS_FS|BLK_DEV_NVME|NVME_CORE|9P_FS)' /boot/config-\$(uname -r)"
 
-      - name: Verify NVMe device still present after kernel change
+      - name: Verify NVMe device present after kernel change
         run: |
-          ssh -i "$HOME/.ssh/id_ed25519" \
+          ssh -i "$HOME/.ssh/id_rsa" \
               -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" ubuntu@localhost \
+              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
               "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
           echo "NVMe device confirmed after kernel install"
 
