@@ -12,7 +12,7 @@
 [![Init Update](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml)
 [![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
 [![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
-[![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-RFC%20v3-orange.svg)](https://lore.kernel.org/io-uring/cover.1777475843.git.asml.silence@gmail.com/)
+[![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-v11%20for--next-green.svg)](https://github.com/anuj7781/linux-kernel/tree/anuj/fs-dmabuf-rfc-v11-desc-v2)
 [![amdgpu no-large-BAR](https://img.shields.io/badge/amdgpu-no--large--BAR-blue.svg)](patches/amdgpu-no-large-bar/README.md)
 
 This repo contains a few scripts I find useful for kernel
