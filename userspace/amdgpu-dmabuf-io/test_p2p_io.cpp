@@ -10,11 +10,12 @@
 #include <amdgpu_drm.h>
 #include <hip/hip_runtime.h>
 
-// ---- UAPI definitions from Pavel Begunkov's io_uring DMA-BUF patchset v3 ----
+// ---- UAPI definitions from Pavel Begunkov's io_uring DMA-BUF patchset v11 ----
 //
-// These are added to include/uapi/linux/io_uring.h by patches 9 and 10.
-// Once the patched kernel is installed these will be in the system headers
-// and these local definitions can be removed.
+// Merged into Jens Axboe's for-next tree (git://git.kernel.dk/linux).
+// Added to include/uapi/linux/io_uring.h by patches 10 and 13 of the series.
+// Once a kernel from that tree (or a release containing it) is installed,
+// these local definitions can be removed.
 
 enum io_uring_regbuf_type {
     IO_REGBUF_TYPE_EMPTY  = 0,
@@ -33,7 +34,7 @@ struct io_uring_regbuf_desc {
     __u64 __resv[6];
 };
 
-// Flag added to io_uring_rsrc_update2::flags by patch 9.
+// Flag added to io_uring_rsrc_update2::flags by patch 10.
 #define IORING_RSRC_UPDATE_EXTENDED (1U << 1)
 
 // ---- end UAPI definitions ----

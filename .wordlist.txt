@@ -84,7 +84,11 @@ ap
 amdgpu
 aws
 amdkfd
+anuj
 asml
+fs
+rfc
+vm
 atomics
 autoconf
 automake
