@@ -92,6 +92,7 @@ jobs:
       # we must use that key, not a freshly generated one, because there is no
       # cloud-init bake to inject ours.
       - name: Fetch VM SSH keys from OCI metadata
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$VM_IMAGES_DIR/.oras-meta" "$HOME/.ssh"
@@ -156,6 +157,7 @@ jobs:
 
       - name: Download and decompress qcow2 blob
         if: steps.qcow2-cache.outputs.cache-hit != 'true'
+        shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/qcow2-cache"
