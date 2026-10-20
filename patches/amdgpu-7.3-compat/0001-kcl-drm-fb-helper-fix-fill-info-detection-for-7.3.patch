@@ -1,0 +1,29 @@
+Drop the drmP.h include from the drm_fb_helper_fill_info autoconf probe.
+
+drmP.h was removed from mainline kernels before v7.3.  The out-of-tree kcl
+header at include/kcl/header/drm/drmP.h is a no-op wrapper when
+HAVE_DRM_DRMP_H is unset.  Because the autoconf compile-test includes
+drmP.h from the *kernel* headers directory (not the kcl shadow path), the
+test fails on any kernel that no longer ships drmP.h, and the flag
+HAVE_DRM_FB_HELPER_FILL_INFO is never defined.
+
+When the flag is absent, kcl_drm_fb.c attempts to implement
+drm_fb_helper_fill_info() by calling drm_fb_helper_fill_fix() and
+drm_fb_helper_fill_var(), both of which became file-scope static helpers
+inside drm_fb_helper.c in v7.x and are therefore unreachable from
+out-of-tree code.
+
+Fix: remove the superfluous drmP.h include from the AC_KERNEL_TRY_COMPILE
+body.  drm_fb_helper.h is self-contained; the function prototype for
+drm_fb_helper_fill_info() is declared there directly.
+
+--- a/amd/dkms/m4/drm-fb-helper-fill-info.m4
++++ b/amd/dkms/m4/drm-fb-helper-fill-info.m4
+@@ -5,7 +5,6 @@
+ AC_DEFUN([AC_AMDGPU_DRM_FB_HELPER_FILL_INFO], [
+ 	AC_KERNEL_DO_BACKGROUND([
+ 		AC_KERNEL_TRY_COMPILE([
+-			#include <drm/drmP.h>
+ 			#include <drm/drm_fb_helper.h>
+ 		], [
+ 			drm_fb_helper_fill_info(NULL, NULL, NULL);

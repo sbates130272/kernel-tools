@@ -1,0 +1,331 @@
+From 3df31bcbd353d09fc9ae7a3a01868ea26babde2f Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:11 -0600
+Subject: [PATCH 04/20] block: introduce dma map backed bio type
+
+---
+ block/bio.c               | 28 +++++++++++++++------
+ block/blk-merge.c         | 52 +++++++++++++++++++++++++++++++++++++++
+ block/blk-mq.c            |  6 +++++
+ block/fops.c              | 16 ++++++------
+ include/linux/bio.h       | 11 +++++----
+ include/linux/blk-mq.h    |  7 ++++++
+ include/linux/blk_types.h | 14 ++++++++++-
+ include/linux/bvec.h      |  3 ++-
+ 8 files changed, 114 insertions(+), 23 deletions(-)
+
+diff --git a/block/bio.c b/block/bio.c
+index 5018a6fc2..82196a529 100644
+--- a/block/bio.c
++++ b/block/bio.c
+@@ -902,7 +902,11 @@ struct bio *bio_alloc_clone(struct block_device *bdev, struct bio *bio_src,
+ 		bio_put(bio);
+ 		return NULL;
+ 	}
+-	bio->bi_io_vec = bio_src->bi_io_vec;
++
++	if (op_is_dmabuf(bio->bi_opf))
++		bio->bi_dmabuf_map = bio_src->bi_dmabuf_map;
++	else
++		bio->bi_io_vec = bio_src->bi_io_vec;
+ 
+ 	return bio;
+ }
+@@ -1182,15 +1186,26 @@ void __bio_release_pages(struct bio *bio, bool mark_dirty)
+ }
+ EXPORT_SYMBOL_GPL(__bio_release_pages);
+ 
+-void bio_iov_bvec_set(struct bio *bio, const struct iov_iter *iter)
++bool bio_iov_iter_set(struct bio *bio, const struct iov_iter *iter)
+ {
++	if (!iov_iter_is_bvec(iter) && !iov_iter_is_dmabuf_map(iter))
++		return false;
++
+ 	WARN_ON_ONCE(bio->bi_max_vecs);
+ 
++	static_assert(offsetof(struct bio, bi_io_vec) ==
++		      offsetof(struct bio, bi_dmabuf_map));
++	static_assert(offsetof(struct iov_iter, bvec) ==
++		      offsetof(struct iov_iter, dmabuf_map));
++
+ 	bio->bi_io_vec = (struct bio_vec *)iter->bvec;
+ 	bio->bi_iter.bi_idx = 0;
+-	bio->bi_iter.bi_bvec_done = iter->iov_offset;
++	bio->bi_iter.bi_offset = iter->iov_offset;
+ 	bio->bi_iter.bi_size = iov_iter_count(iter);
+ 	bio_set_flag(bio, BIO_CLONED);
++	if (iov_iter_is_dmabuf_map(iter))
++		bio->bi_opf |= REQ_NOMERGE | REQ_DMABUF;
++	return true;
+ }
+ 
+ /*
+@@ -1285,10 +1300,9 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
+ 	if (WARN_ON_ONCE(bio_flagged(bio, BIO_CLONED)))
+ 		return -EIO;
+ 
+-	if (iov_iter_is_bvec(iter)) {
+-		bio_iov_bvec_set(bio, iter);
+-
+-		if (!bio_iov_bvec_aligned(bio, mem_align_mask))
++	if (bio_iov_iter_set(bio, iter)) {
++		if (iov_iter_is_bvec(iter) &&
++		    !bio_iov_bvec_aligned(bio, mem_align_mask))
+ 			return -EINVAL;
+ 
+ 		iov_iter_advance(iter, bio->bi_iter.bi_size);
+diff --git a/block/blk-merge.c b/block/blk-merge.c
+index ab1161ca6..90d7830b8 100644
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -9,6 +9,7 @@
+ #include <linux/blk-integrity.h>
+ #include <linux/part_stat.h>
+ #include <linux/blk-cgroup.h>
++#include <linux/dma-buf-io.h>
+ 
+ #include <trace/events/block.h>
+ 
+@@ -319,6 +320,41 @@ static inline unsigned int bvec_seg_gap(struct bio_vec *bvprv,
+ 	return bv->bv_offset | (bvprv->bv_offset + bvprv->bv_len);
+ }
+ 
++static inline int bio_split_io_at_dmabuf(struct bio *bio,
++		const struct queue_limits *lim, unsigned *segs,
++		unsigned max_bytes, unsigned len_align_mask,
++		unsigned start_align_mask)
++{
++	unsigned bytes = min(bio->bi_iter.bi_size, max_bytes);
++	unsigned seg_shift = bio->bi_dmabuf_map->min_seg_shift;
++	unsigned offset = bio->bi_iter.bi_offset & ((1U << seg_shift) - 1);
++	u64 max_segs_bytes;
++
++	/*
++	 * dma-buf maps don't expose the underlying segmentation, but they're
++	 * guaranteed to not have alignment gaps, we only need to check the
++	 * start and length alignment.
++	 */
++	if ((bio->bi_iter.bi_offset & start_align_mask) ||
++	    (bio->bi_iter.bi_size & len_align_mask))
++		return -EINVAL;
++
++	/* Presented as a single contiguous range into the dma-buf */
++	*segs = 1;
++
++	/*
++	 * Limit by the number of segments by using the minimal segment size.
++	 * Any I/O consisting of N full segments should be able to cover at
++	 * least N multiplied by the segment size. It's stricter than walking
++	 * the segments and might cause extra splitting.
++	 */
++	max_segs_bytes = (u64)lim->max_segments << seg_shift;
++	bytes = min_t(u64, bytes, max_segs_bytes - offset);
++	if (bytes != bio->bi_iter.bi_size)
++		return bytes;
++	return 0;
++}
++
+ /**
+  * bio_split_io_at - check if and where to split a bio
+  * @bio:  [in] bio to be split
+@@ -346,6 +382,19 @@ int bio_split_io_at(struct bio *bio, const struct queue_limits *lim,
+ 		len_align_mask |= (bc->bc_key->crypto_cfg.data_unit_size - 1);
+ 	}
+ 
++	if (op_is_dmabuf(bio->bi_opf)) {
++		int ret;
++
++		ret = bio_split_io_at_dmabuf(bio, lim, &nsegs, max_bytes,
++					     len_align_mask, start_align_mask);
++		if (ret < 0)
++			return ret;
++		if (!ret)
++			goto out;
++		bytes = ret;
++		goto split;
++	}
++
+ 	bio_for_each_bvec(bv, bio, iter) {
+ 		if (bv.bv_offset & start_align_mask ||
+ 		    bv.bv_len & len_align_mask)
+@@ -376,6 +425,7 @@ int bio_split_io_at(struct bio *bio, const struct queue_limits *lim,
+ 		bvprvp = &bvprv;
+ 	}
+ 
++out:
+ 	*segs = nsegs;
+ 	bio->bi_bvec_gap_bit = ffs(gaps);
+ 	return 0;
+@@ -493,6 +543,8 @@ unsigned int blk_recalc_rq_segments(struct request *rq)
+ 
+ 	if (!rq->bio)
+ 		return 0;
++	if (op_is_dmabuf(rq->bio->bi_opf))
++		return 1;
+ 
+ 	switch (bio_op(rq->bio)) {
+ 	case REQ_OP_DISCARD:
+diff --git a/block/blk-mq.c b/block/blk-mq.c
+index 2c850330a..d4923d536 100644
+--- a/block/blk-mq.c
++++ b/block/blk-mq.c
+@@ -3138,6 +3138,12 @@ void blk_mq_submit_bio(struct bio *bio)
+ 		goto queue_exit;
+ 	}
+ 
++	if (unlikely(op_is_dmabuf(bio->bi_opf) &&
++		bdev_has_integrity_csum(bio->bi_bdev))) {
++		bio_endio_status(bio, BLK_STS_NOTSUPP);
++		goto queue_exit;
++	}
++
+ 	if ((bio->bi_opf & REQ_POLLED) && !blk_mq_can_poll(q)) {
+ 		bio_endio_status(bio, BLK_STS_NOTSUPP);
+ 		goto queue_exit;
+diff --git a/block/fops.c b/block/fops.c
+index a84450d79..f76396287 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -340,15 +340,13 @@ static ssize_t __blkdev_direct_IO_async(struct kiocb *iocb,
+ 	bio->bi_end_io = blkdev_bio_end_io_async;
+ 	bio->bi_ioprio = iocb->ki_ioprio;
+ 
+-	if (iov_iter_is_bvec(iter)) {
+-		/*
+-		 * Users don't rely on the iterator being in any particular
+-		 * state for async I/O returning -EIOCBQUEUED, hence we can
+-		 * avoid expensive iov_iter_advance(). Bypass
+-		 * bio_iov_iter_get_pages() and set the bvec directly.
+-		 */
+-		bio_iov_bvec_set(bio, iter);
+-	} else {
++	/*
++	 * Users don't rely on the iterator being in any particular
++	 * state for async I/O returning -EIOCBQUEUED, hence we can
++	 * avoid expensive iov_iter_advance(). Bypass
++	 * bio_iov_iter_get_pages() and set the bvec/dmabuf directly.
++	 */
++	if (!bio_iov_iter_set(bio, iter)) {
+ 		ret = blkdev_iov_iter_get_pages(bio, iter, bdev);
+ 		if (unlikely(ret))
+ 			goto out_bio_put;
+diff --git a/include/linux/bio.h b/include/linux/bio.h
+index f406e768d..b0d5b5ebf 100644
+--- a/include/linux/bio.h
++++ b/include/linux/bio.h
+@@ -80,7 +80,8 @@ static inline bool bio_no_advance_iter(const struct bio *bio)
+ {
+ 	return bio_op(bio) == REQ_OP_DISCARD ||
+ 	       bio_op(bio) == REQ_OP_SECURE_ERASE ||
+-	       bio_op(bio) == REQ_OP_WRITE_ZEROES;
++	       bio_op(bio) == REQ_OP_WRITE_ZEROES ||
++	       op_is_dmabuf(bio->bi_opf);
+ }
+ 
+ static inline void *bio_data(struct bio *bio)
+@@ -399,12 +400,12 @@ static inline void bio_wouldblock_error(struct bio *bio)
+ 
+ /*
+  * Calculate number of bvec segments that should be allocated to fit data
+- * pointed by @iter. If @iter is backed by bvec it's going to be reused
+- * instead of allocating a new one.
++ * pointed by @iter. If @iter is backed by a bvec or a dmabuf, the bvec array /
++ * the dma map are going to be reused, and so no extra allocation is required.
+  */
+ static inline int bio_iov_vecs_to_alloc(struct iov_iter *iter, int max_segs)
+ {
+-	if (iov_iter_is_bvec(iter))
++	if (iov_iter_is_bvec(iter) || iov_iter_is_dmabuf_map(iter))
+ 		return 0;
+ 	return iov_iter_npages(iter, max_segs);
+ }
+@@ -483,7 +484,7 @@ int bdev_rw_virt(struct block_device *bdev, sector_t sector, void *data,
+ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
+ 		unsigned mem_align_mask, unsigned len_align_mask);
+ 
+-void bio_iov_bvec_set(struct bio *bio, const struct iov_iter *iter);
++bool bio_iov_iter_set(struct bio *bio, const struct iov_iter *iter);
+ void __bio_release_pages(struct bio *bio, bool mark_dirty);
+ extern void bio_set_pages_dirty(struct bio *bio);
+ extern void bio_check_pages_dirty(struct bio *bio);
+diff --git a/include/linux/blk-mq.h b/include/linux/blk-mq.h
+index af878597a..7c7504c84 100644
+--- a/include/linux/blk-mq.h
++++ b/include/linux/blk-mq.h
+@@ -1017,6 +1017,13 @@ static inline void *blk_mq_rq_to_pdu(struct request *rq)
+ 	return rq + 1;
+ }
+ 
++static inline bool blk_mq_rq_is_dmabuf(struct request *rq)
++{
++	if (!IS_ENABLED(CONFIG_DMA_SHARED_BUFFER))
++		return false;
++	return rq->bio && op_is_dmabuf(rq->bio->bi_opf);
++}
++
+ static inline struct blk_mq_hw_ctx *queue_hctx(struct request_queue *q, int id)
+ {
+ 	struct blk_mq_hw_ctx *hctx;
+diff --git a/include/linux/blk_types.h b/include/linux/blk_types.h
+index 8808ee76e..d605e3171 100644
+--- a/include/linux/blk_types.h
++++ b/include/linux/blk_types.h
+@@ -233,7 +233,12 @@ struct bio {
+ 	atomic_t		__bi_remaining;
+ 
+ 	/* The actual vec list, preserved by bio_reset() */
+-	struct bio_vec		*bi_io_vec;
++	union {
++		struct bio_vec		*bi_io_vec;
++		/* Driver specific dma map, valid IFF REQ_DMABUF is set */
++		struct dma_buf_io_map	*bi_dmabuf_map;
++	};
++
+ 	struct bvec_iter	bi_iter;
+ 
+ 	union {
+@@ -401,6 +406,7 @@ enum req_flag_bits {
+ 	__REQ_DRV,		/* for driver use */
+ 	__REQ_FS_PRIVATE,	/* for file system (submitter) use */
+ 	__REQ_ATOMIC,		/* for atomic write operations */
++	__REQ_DMABUF,		/* Using premmaped dma buffers */
+ 	/*
+ 	 * Command specific flags, keep last:
+ 	 */
+@@ -433,6 +439,7 @@ enum req_flag_bits {
+ #define REQ_DRV		(__force blk_opf_t)(1ULL << __REQ_DRV)
+ #define REQ_FS_PRIVATE	(__force blk_opf_t)(1ULL << __REQ_FS_PRIVATE)
+ #define REQ_ATOMIC	(__force blk_opf_t)(1ULL << __REQ_ATOMIC)
++#define REQ_DMABUF	(__force blk_opf_t)(1ULL << __REQ_DMABUF)
+ 
+ #define REQ_NOUNMAP	(__force blk_opf_t)(1ULL << __REQ_NOUNMAP)
+ 
+@@ -486,6 +493,11 @@ static inline bool op_is_discard(blk_opf_t op)
+ 	return (op & REQ_OP_MASK) == REQ_OP_DISCARD;
+ }
+ 
++static inline bool op_is_dmabuf(blk_opf_t op)
++{
++	return op & REQ_DMABUF;
++}
++
+ /*
+  * Check if a bio or request operation is a zone management operation.
+  */
+diff --git a/include/linux/bvec.h b/include/linux/bvec.h
+index 92837e274..207fdb3c5 100644
+--- a/include/linux/bvec.h
++++ b/include/linux/bvec.h
+@@ -108,7 +108,8 @@ struct bvec_iter {
+ 	unsigned int		bi_idx;
+ 
+ 	/*
+-	 * Current offset in the bvec entry pointed to by `bi_idx`.
++	 * Current offset in the bvec entry pointed to by `bi_idx` or into
++	 * a dma-buf map.
+ 	 */
+ 	unsigned int		bi_bvec_done;
+ } __packed __aligned(4);
+-- 
+2.53.0
+

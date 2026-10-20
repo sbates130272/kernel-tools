@@ -1,0 +1,17 @@
+--- a/include/kcl/kcl_dma_mapping.h	2026-10-20 08:37:55.673865842 -0600
++++ b/include/kcl/kcl_dma_mapping.h	2026-10-20 08:38:03.577663540 -0600
+@@ -130,8 +130,12 @@
+ 
+ static inline bool kcl_has_dma_map_resource_ops(struct device *dev)
+ {
+-	const struct dma_map_ops *ops = get_dma_ops(dev);
+-	return ops == NULL || ops->map_resource != NULL;
++	/*
++	 * struct dma_map_ops.map_resource was removed in 7.2+.
++	 * dma_map_resource() remains a top-level API so resource mapping
++	 * is always available; return true unconditionally.
++	 */
++	return true;
+ }
+ /*
+  * v5.8-rc3-2-g68d237056e00 ("scatterlist: protect parameters of the sg_table related macros")

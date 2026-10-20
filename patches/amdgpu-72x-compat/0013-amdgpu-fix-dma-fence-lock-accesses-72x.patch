@@ -1,0 +1,77 @@
+--- a/amd/amdgpu/amdgpu_ring.c	2026-10-20 09:00:56.266654571 -0600
++++ b/amd/amdgpu/amdgpu_ring.c	2026-10-20 09:02:32.741585914 -0600
+@@ -26,6 +26,7 @@
+  *          Jerome Glisse
+  *          Christian König
+  */
++#include <linux/version.h>
+ #include <linux/seq_file.h>
+ #include <linux/slab.h>
+ #include <linux/uaccess.h>
+@@ -474,10 +475,18 @@
+ 	if (amdgpu_sriov_vf(ring->adev) || !ring->funcs->soft_recovery || !fence)
+ 		return false;
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	/* dma_fence.lock was replaced in 7.2+; use the new helpers. */
++	dma_fence_lock_irqsave(fence, flags);
++	if (!dma_fence_is_signaled_locked(fence))
++		dma_fence_set_error(fence, -ENODATA);
++	dma_fence_unlock_irqrestore(fence, flags);
++#else
+ 	spin_lock_irqsave(fence->lock, flags);
+ 	if (!dma_fence_is_signaled_locked(fence))
+ 		dma_fence_set_error(fence, -ENODATA);
+ 	spin_unlock_irqrestore(fence->lock, flags);
++#endif
+ 
+ 	while (!dma_fence_is_signaled(fence) &&
+ 	       ktime_to_ns(ktime_sub(deadline, ktime_get())) > 0)
+--- a/amd/amdgpu/amdgpu_vm.c	2026-10-20 09:00:56.270832198 -0600
++++ b/amd/amdgpu/amdgpu_vm.c	2026-10-20 09:02:52.946639427 -0600
+@@ -26,6 +26,7 @@
+  *          Jerome Glisse
+  */
+ 
++#include <linux/version.h>
+ #include <linux/dma-fence-array.h>
+ #include <linux/interval_tree_generic.h>
+ #include <linux/idr.h>
+@@ -2817,8 +2818,13 @@
+ 	dma_fence_put(vm->last_unlocked);
+ 	dma_fence_wait(vm->last_tlb_flush, false);
+ 	/* Make sure that all fence callbacks have completed */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	dma_fence_lock_irqsave(vm->last_tlb_flush, flags);
++	dma_fence_unlock_irqrestore(vm->last_tlb_flush, flags);
++#else
+ 	spin_lock_irqsave(vm->last_tlb_flush->lock, flags);
+ 	spin_unlock_irqrestore(vm->last_tlb_flush->lock, flags);
++#endif
+ 	dma_fence_put(vm->last_tlb_flush);
+ 
+ 	list_for_each_entry_safe(mapping, tmp, &vm->freed, list) {
+--- a/amd/amdgpu/amdgpu_dma_buf.c	2026-10-20 09:00:56.274753102 -0600
++++ b/amd/amdgpu/amdgpu_dma_buf.c	2026-10-20 09:02:00.600295204 -0600
+@@ -31,6 +31,7 @@
+  * objects between different devices via PRIME <prime_buffer_sharing>`.
+  */
+ 
++#include <linux/version.h>
+ #include "amdgpu.h"
+ #include "amdgpu_display.h"
+ #include "amdgpu_gem.h"
+@@ -814,7 +815,12 @@
+ #ifdef HAVE_STRUCT_DMA_BUF_ATTACH_OPS_ALLOW_PEER2PEER
+ 	.allow_peer2peer = true,
+ #endif
+-	.move_notify = amdgpu_dma_buf_move_notify
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	/* move_notify was renamed to invalidate_mappings in 7.2+ */
++	.invalidate_mappings = amdgpu_dma_buf_move_notify,
++#else
++	.move_notify = amdgpu_dma_buf_move_notify,
++#endif
+ };
+ #endif
+ /**

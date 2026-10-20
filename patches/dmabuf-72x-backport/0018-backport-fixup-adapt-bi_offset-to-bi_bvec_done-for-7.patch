@@ -1,0 +1,104 @@
+From 83467614dac4b3873c0c67add11ad243f3660035 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 21:07:31 -0600
+Subject: [PATCH 18/20] backport fixup: adapt bi_offset to bi_bvec_done for
+ 7.2.4 bvec_iter compat
+
+---
+ block/bio.c             | 2 +-
+ block/blk-merge.c       | 4 ++--
+ drivers/nvme/host/pci.c | 6 +++---
+ include/linux/bio.h     | 4 ++--
+ 4 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/block/bio.c b/block/bio.c
+index e9dd17fdf..c39bea83c 100644
+--- a/block/bio.c
++++ b/block/bio.c
+@@ -1201,7 +1201,7 @@ bool bio_iov_iter_set(struct bio *bio, const struct iov_iter *iter)
+ 
+ 	bio->bi_io_vec = (struct bio_vec *)iter->bvec;
+ 	bio->bi_iter.bi_idx = 0;
+-	bio->bi_iter.bi_offset = iter->iov_offset;
++	bio->bi_iter.bi_bvec_done = iter->iov_offset;
+ 	bio->bi_iter.bi_size = iov_iter_count(iter);
+ 	bio_set_flag(bio, BIO_CLONED);
+ 	if (iov_iter_is_dmabuf_map(iter))
+diff --git a/block/blk-merge.c b/block/blk-merge.c
+index 90d7830b8..07bd6e9de 100644
+--- a/block/blk-merge.c
++++ b/block/blk-merge.c
+@@ -327,7 +327,7 @@ static inline int bio_split_io_at_dmabuf(struct bio *bio,
+ {
+ 	unsigned bytes = min(bio->bi_iter.bi_size, max_bytes);
+ 	unsigned seg_shift = bio->bi_dmabuf_map->min_seg_shift;
+-	unsigned offset = bio->bi_iter.bi_offset & ((1U << seg_shift) - 1);
++	unsigned offset = bio->bi_iter.bi_bvec_done & ((1U << seg_shift) - 1);
+ 	u64 max_segs_bytes;
+ 
+ 	/*
+@@ -335,7 +335,7 @@ static inline int bio_split_io_at_dmabuf(struct bio *bio,
+ 	 * guaranteed to not have alignment gaps, we only need to check the
+ 	 * start and length alignment.
+ 	 */
+-	if ((bio->bi_iter.bi_offset & start_align_mask) ||
++	if ((bio->bi_iter.bi_bvec_done & start_align_mask) ||
+ 	    (bio->bi_iter.bi_size & len_align_mask))
+ 		return -EINVAL;
+ 
+diff --git a/drivers/nvme/host/pci.c b/drivers/nvme/host/pci.c
+index 87c24c352..ccb32afeb 100644
+--- a/drivers/nvme/host/pci.c
++++ b/drivers/nvme/host/pci.c
+@@ -866,7 +866,7 @@ static blk_status_t nvme_rq_setup_dmabuf_map(struct request *req,
+ {
+ 	struct nvme_iod *iod = blk_mq_rq_to_pdu(req);
+ 	struct nvme_dmabuf_map *map = nvme_req_to_map(req);
+-	unsigned bvec_done = req->bio->bi_iter.bi_offset;
++	unsigned bvec_done = req->bio->bi_iter.bi_bvec_done;
+ 	unsigned map_idx = bvec_done / NVME_CTRL_PAGE_SIZE;
+ 	unsigned offset = bvec_done & (NVME_CTRL_PAGE_SIZE - 1);
+ 	int length = blk_rq_payload_bytes(req) - (NVME_CTRL_PAGE_SIZE - offset);
+@@ -1245,7 +1245,7 @@ static unsigned int nvme_pci_dmabuf_sgl_nents(struct request *req)
+ 	struct nvme_dmabuf_map *map = to_nvme_dmabuf_map(bio->bi_dmabuf_map);
+ 	struct scatterlist *sg;
+ 	unsigned long tmp;
+-	size_t offset = bio->bi_iter.bi_offset;
++	size_t offset = bio->bi_iter.bi_bvec_done;
+ 	size_t remaining = blk_rq_payload_bytes(req);
+ 	unsigned int nents = 0;
+ 
+@@ -1284,7 +1284,7 @@ static blk_status_t nvme_rq_setup_dmabuf_sgl(struct request *req,
+ 	struct nvme_dmabuf_map *map = nvme_req_to_map(req);
+ 	size_t length = blk_rq_payload_bytes(req);
+ 	struct nvme_sgl_desc *sg_list = &iod->cmd.common.dptr.sgl;
+-	size_t offset = req->bio->bi_iter.bi_offset;
++	size_t offset = req->bio->bi_iter.bi_bvec_done;
+ 	bool pooled = entries > 1;
+ 	dma_addr_t sgl_dma = 0;
+ 	unsigned int mapped = 0;
+diff --git a/include/linux/bio.h b/include/linux/bio.h
+index b0d5b5ebf..0250154b3 100644
+--- a/include/linux/bio.h
++++ b/include/linux/bio.h
+@@ -116,7 +116,7 @@ static inline void bio_advance_iter(const struct bio *bio,
+ 
+ 	if (bio_no_advance_iter(bio)) {
+ 		iter->bi_size -= bytes;
+-		iter->bi_offset += bytes;
++		iter->bi_bvec_done += bytes;
+ 	} else {
+ 		bvec_iter_advance(bio->bi_io_vec, iter, bytes);
+ 		/* TODO: It is reasonable to complete bio with error here. */
+@@ -132,7 +132,7 @@ static inline void bio_advance_iter_single(const struct bio *bio,
+ 
+ 	if (bio_no_advance_iter(bio)) {
+ 		iter->bi_size -= bytes;
+-		iter->bi_offset += bytes;
++		iter->bi_bvec_done += bytes;
+ 	} else {
+ 		bvec_iter_advance_single(bio->bi_io_vec, iter, bytes);
+ 	}
+-- 
+2.53.0
+

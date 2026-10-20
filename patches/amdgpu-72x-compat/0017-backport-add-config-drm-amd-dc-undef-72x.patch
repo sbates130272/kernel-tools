@@ -1,0 +1,24 @@
+--- a/amd/backport/backport.h	2026-10-20 09:19:25.943010712 -0600
++++ b/amd/backport/backport.h	2026-10-20 09:40:17.991014188 -0600
+@@ -4,6 +4,8 @@
+ 
+ #include <linux/version.h>
+ #include <linux/kernel.h>
++
++
+ #include <kcl/kcl_moduleparam.h>
+ #include <kcl/kcl_types.h>
+ #include <kcl/kcl_idr.h>
+@@ -156,4 +158,12 @@
+ #include <kcl/kcl_uio.h>
+ #include <kcl/kcl_mempool.h>
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/* amdgpu_dm display stack is not ported to 7.2+ DRM APIs.
++ * Undefine CONFIG_DRM_AMD_DC here (after kconfig.h has been included)
++ * so that #if CONFIG_DRM_AMD_DC guards don't reference uncompiled symbols. */
++#undef CONFIG_DRM_AMD_DC
++#undef CONFIG_DRM_AMD_DC_FP
++#endif
++
+ #endif /* AMDGPU_BACKPORT_H */

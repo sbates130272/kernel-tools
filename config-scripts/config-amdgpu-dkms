@@ -1,0 +1,30 @@
+# Source config-default when available (build-remote context sets SCRIPT_DIR)
+# shellcheck source=/dev/null
+[ -n "${SCRIPT_DIR:-}" ] && source "${SCRIPT_DIR}/../config-scripts/config-default" || true
+
+# Required kernel config for amdgpu-dkms to build and load correctly.
+#
+# localmodconfig drops these when amdgpu is blacklisted on the remote node
+# (which it always is on rocjitsu VMs — the driver is loaded manually via
+# amdgpu-probe after boot). This fragment ensures they survive the
+# localmodconfig pass regardless of whether the module is loaded.
+
+# DRM acceleration framework — required by amdkfd/KFD compute path
+./scripts/config -e DRM_ACCEL
+
+# Core DRM infrastructure amdgpu depends on
+./scripts/config -e DRM
+./scripts/config -e DRM_KMS_HELPER
+./scripts/config -m DRM_TTM
+./scripts/config -m DRM_TTM_HELPER
+./scripts/config -m DRM_BUDDY
+./scripts/config -m DRM_EXEC
+./scripts/config -m DRM_SUBALLOC_HELPER
+./scripts/config -m DRM_SCHED
+
+# amdgpu itself (in-tree, as a module — DKMS overrides this in updates/)
+./scripts/config -m DRM_AMDGPU
+./scripts/config -e DRM_AMDGPU_USERPTR
+
+# Required for the DMA-BUF XFS iomap P2P test
+./scripts/config -m XFS_FS

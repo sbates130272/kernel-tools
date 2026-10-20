@@ -1,0 +1,13 @@
+--- a/amd/amdkcl/kcl_page_alloc.c	2026-10-20 08:51:11.388364610 -0600
++++ b/amd/amdkcl/kcl_page_alloc.c	2026-10-20 08:51:21.442762564 -0600
+@@ -28,7 +28,10 @@
+ //#include <linux/kasan.h>
+ #include <linux/module.h>
+ #include <linux/suspend.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ #include <linux/pagevec.h>
++#endif
+ #include <linux/blkdev.h>
+ #include <linux/slab.h>
+ #include <linux/ratelimit.h>

@@ -1,0 +1,21 @@
+--- a/include/kcl/kcl_preempt.h	2026-10-20 08:42:54.120330553 -0600
++++ b/include/kcl/kcl_preempt.h	2026-10-20 08:43:09.251146539 -0600
+@@ -2,6 +2,7 @@
+ #ifndef AMDKCL_PREEMPT_H
+ #define AMDKCL_PREEMPT_H
+ #include <linux/preempt.h>
++#include <linux/version.h>
+ 
+ #ifndef in_task
+ #ifndef PREEMPT_BITS
+@@ -53,7 +54,9 @@
+ 				   (NMI_MASK | HARDIRQ_MASK | SOFTIRQ_OFFSET)))
+ #endif
+ 
+-#ifndef HAVE_MIGRATE_DISABLE
++/* In 7.2+, migrate_disable/enable are declared in linux/sched.h for modules;
++ * providing them here as static inline would conflict. */
++#if !defined(HAVE_MIGRATE_DISABLE) && LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ static __always_inline void migrate_disable(void)
+ {
+ 	preempt_disable();

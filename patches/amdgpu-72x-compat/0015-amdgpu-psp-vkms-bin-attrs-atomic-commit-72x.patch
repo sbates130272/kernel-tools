@@ -1,0 +1,87 @@
+--- a/amd/amdgpu/amdgpu_psp.c	2026-10-20 09:11:10.200838104 -0600
++++ b/amd/amdgpu/amdgpu_psp.c	2026-10-20 09:11:37.048014755 -0600
+@@ -23,6 +23,7 @@
+  *
+  */
+ 
++#include <linux/version.h>
+ #include <linux/firmware.h>
+ #include <drm/drm_drv.h>
+ 
+@@ -4732,7 +4733,8 @@
+ }
+ static DEVICE_ATTR(psp_vbflash_status, 0440, amdgpu_psp_vbflash_status, NULL);
+ 
+-#ifdef HAVE_ATTRIBUTE_GROUP_BIN_ATTRS_NEW
++#if defined(HAVE_ATTRIBUTE_GROUP_BIN_ATTRS_NEW) || LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/* bin_attrs is const struct bin_attribute *const * in 7.2+ */
+ static const struct bin_attribute *const bin_flash_attrs[] = {
+ #else
+ static struct bin_attribute *bin_flash_attrs[] = {
+--- a/amd/amdgpu/amdgpu_vkms.c	2026-10-20 09:08:55.285988935 -0600
++++ b/amd/amdgpu/amdgpu_vkms.c	2026-10-20 09:10:48.791007095 -0600
+@@ -1,5 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0+
+ 
++#include <linux/version.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_simple_kms_helper.h>
+@@ -128,7 +129,9 @@
+ };
+ 
+ static void amdgpu_vkms_crtc_atomic_enable(struct drm_crtc *crtc,
+-#if defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_ENABLE_ARG_DRM_ATOMIC_STATE)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++					   struct drm_atomic_commit *state)
++#elif defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_ENABLE_ARG_DRM_ATOMIC_STATE)
+ 					   struct drm_atomic_state *state)
+ #else
+ 					   struct drm_crtc_state *state)
+@@ -138,7 +141,9 @@
+ }
+ 
+ static void amdgpu_vkms_crtc_atomic_disable(struct drm_crtc *crtc,
+-#if defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_ENABLE_ARG_DRM_ATOMIC_STATE)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++					    struct drm_atomic_commit *state)
++#elif defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_ENABLE_ARG_DRM_ATOMIC_STATE)
+ 					   struct drm_atomic_state *state)
+ #else
+ 					   struct drm_crtc_state *state)
+@@ -148,7 +153,9 @@
+ }
+ 
+ static void amdgpu_vkms_crtc_atomic_flush(struct drm_crtc *crtc,
+-#if defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_CHECK_ARG_DRM_ATOMIC_STATE)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++					   struct drm_atomic_commit *state)
++#elif defined(HAVE_DRM_CRTC_HELPER_FUNCS_ATOMIC_CHECK_ARG_DRM_ATOMIC_STATE)
+ 					   struct drm_atomic_state *state)
+ #else
+ 					   struct drm_crtc_state *state)
+@@ -278,7 +285,9 @@
+ };
+ 
+ static void amdgpu_vkms_plane_atomic_update(struct drm_plane *plane,
+-#if defined(HAVE_STRUCT_DRM_PLANE_HELPER_FUNCS_ATOMIC_CHECK_DRM_ATOMIC_STATE_PARAMS)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++					    struct drm_atomic_commit *old_state)
++#elif defined(HAVE_STRUCT_DRM_PLANE_HELPER_FUNCS_ATOMIC_CHECK_DRM_ATOMIC_STATE_PARAMS)
+ 					    struct drm_atomic_state *old_state)
+ #else
+ 					    struct drm_plane_state *old_state)
+@@ -288,7 +297,12 @@
+ }
+ 
+ static int amdgpu_vkms_plane_atomic_check(struct drm_plane *plane,
+-#if defined(HAVE_STRUCT_DRM_PLANE_HELPER_FUNCS_ATOMIC_CHECK_DRM_ATOMIC_STATE_PARAMS)
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++					  struct drm_atomic_commit *state)
++{
++	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,
++										 plane);
++#elif defined(HAVE_STRUCT_DRM_PLANE_HELPER_FUNCS_ATOMIC_CHECK_DRM_ATOMIC_STATE_PARAMS)
+ 					  struct drm_atomic_state *state)
+ {
+ 	struct drm_plane_state *new_plane_state = drm_atomic_get_new_plane_state(state,

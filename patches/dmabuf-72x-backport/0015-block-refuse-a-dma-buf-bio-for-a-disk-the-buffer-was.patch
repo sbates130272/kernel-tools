@@ -1,0 +1,99 @@
+From a990f0bb0e14cd1cfadce54def9c003da5ed1b4a Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:26 -0600
+Subject: [PATCH 15/20] block: refuse a dma-buf bio for a disk the buffer was
+
+---
+ block/bio.c                | 15 +++++++++++++++
+ block/fops.c               |  7 ++++++-
+ include/linux/dma-buf-io.h |  2 ++
+ 3 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/block/bio.c b/block/bio.c
+index 82196a529..e9dd17fdf 100644
+--- a/block/bio.c
++++ b/block/bio.c
+@@ -19,6 +19,7 @@
+ #include <linux/blk-crypto.h>
+ #include <linux/xarray.h>
+ #include <linux/kmemleak.h>
++#include <linux/dma-buf-io.h>
+ 
+ #include <trace/events/block.h>
+ #include "blk.h"
+@@ -1269,6 +1270,17 @@ static inline bool bio_iov_bvec_aligned(const struct bio *bio,
+ }
+ #endif
+ 
++/*
++ * A dma-buf map is only valid for the disk it was registered on, but
++ * the device backing a file can change after the registration.
++ */
++static bool bio_dmabuf_map_valid(const struct bio *bio,
++				 const struct iov_iter *iter)
++{
++	return iter->dmabuf_map->ctx->registered_devt ==
++		disk_devt(bio->bi_bdev->bd_disk);
++}
++
+ /**
+  * bio_iov_iter_get_pages - add user or kernel pages to a bio
+  * @bio: bio to add pages to
+@@ -1300,6 +1312,9 @@ int bio_iov_iter_get_pages(struct bio *bio, struct iov_iter *iter,
+ 	if (WARN_ON_ONCE(bio_flagged(bio, BIO_CLONED)))
+ 		return -EIO;
+ 
++	if (iov_iter_is_dmabuf_map(iter) && !bio_dmabuf_map_valid(bio, iter))
++		return -EXDEV;
++
+ 	if (bio_iov_iter_set(bio, iter)) {
+ 		if (iov_iter_is_bvec(iter) &&
+ 		    !bio_iov_bvec_aligned(bio, mem_align_mask))
+diff --git a/block/fops.c b/block/fops.c
+index 6d5b3dc65..3b59ad7f4 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -19,6 +19,7 @@
+ #include <linux/iomap.h>
+ #include <linux/module.h>
+ #include <linux/io_uring/cmd.h>
++#include <linux/dma-buf-io.h>
+ #include "blk.h"
+ 
+ static inline struct inode *bdev_file_inode(struct file *file)
+@@ -934,6 +935,7 @@ int bdev_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
+ 			     struct dma_buf_io_ctx *ctx)
+ {
+ 	struct gendisk *disk = bdev->bd_disk;
++	int ret;
+ 
+ 	if (!(file->f_flags & O_DIRECT))
+ 		return -EINVAL;
+@@ -941,7 +943,10 @@ int bdev_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
+ 		return -EOPNOTSUPP;
+ 	if (bdev_has_integrity_csum(bdev))
+ 		return -EOPNOTSUPP;
+-	return disk->fops->init_dma_buf_io_ctx(bdev, ctx);
++	ret = disk->fops->init_dma_buf_io_ctx(bdev, ctx);
++	if (!ret)
++		ctx->registered_devt = disk_devt(disk);
++	return ret;
+ }
+ EXPORT_SYMBOL_GPL(bdev_init_dma_buf_io_ctx);
+ 
+diff --git a/include/linux/dma-buf-io.h b/include/linux/dma-buf-io.h
+index b9bbeca17..d42a79f2a 100644
+--- a/include/linux/dma-buf-io.h
++++ b/include/linux/dma-buf-io.h
+@@ -50,6 +50,8 @@ struct dma_buf_io_ctx {
+ 
+ 	void					*dev_priv;
+ 	const struct dma_buf_io_ops		*dev_ops;
++
++	dev_t					registered_devt;
+ };
+ 
+ int dma_buf_io_ctx_create(struct file *file,
+-- 
+2.53.0
+

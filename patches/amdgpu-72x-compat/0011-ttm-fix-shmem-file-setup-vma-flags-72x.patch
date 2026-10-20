@@ -1,0 +1,50 @@
+--- a/ttm/ttm_backup.c	2026-10-20 08:53:24.715867949 -0600
++++ b/ttm/ttm_backup.c	2026-10-20 08:53:38.751982545 -0600
+@@ -8,6 +8,10 @@
+ #include <linux/export.h>
+ #include <linux/page-flags.h>
+ #include <linux/swap.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++#include <linux/mm_types.h>
++#endif
+ 
+ /*
+  * Need to map shmem indices to handle since a handle value
+@@ -193,5 +197,10 @@
+  */
+ struct file *ttm_backup_shmem_create(loff_t size)
+ {
++	/* vma_flags_t is a struct type in 7.2+; EMPTY_VMA_FLAGS is the zero value */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	return shmem_file_setup("ttm shmem backup", size, EMPTY_VMA_FLAGS);
++#else
+ 	return shmem_file_setup("ttm shmem backup", size, 0);
++#endif
+ }
+--- a/ttm/ttm_tt.c	2026-10-20 08:53:24.719067405 -0600
++++ b/ttm/ttm_tt.c	2026-10-20 08:53:52.172722976 -0600
+@@ -43,6 +43,10 @@
+ #include <linux/sched/mm.h>
+ #include <linux/pagemap.h>
+ #include <linux/shmem_fs.h>
++#include <linux/version.h>
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++#include <linux/mm_types.h>
++#endif
+ #include <drm/drm_cache.h>
+ #include <drm/drm_device.h>
+ #include <drm/drm_util.h>
+@@ -333,7 +337,12 @@
+ 	struct page *to_page;
+ 	int i, ret;
+ 
++	/* vma_flags_t is a struct type in 7.2+; EMPTY_VMA_FLAGS is the zero value */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	swap_storage = shmem_file_setup("ttm swap", size, EMPTY_VMA_FLAGS);
++#else
+ 	swap_storage = shmem_file_setup("ttm swap", size, 0);
++#endif
+ 	if (IS_ERR(swap_storage)) {
+ 		pr_err("Failed allocating swap storage\n");
+ 		return PTR_ERR(swap_storage);

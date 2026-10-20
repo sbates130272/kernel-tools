@@ -1,0 +1,58 @@
+From b18edd4d018f5148938a675d99f9229a82315c42 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:25 -0600
+Subject: [PATCH 14/20] block: factor out bdev_init_dma_buf_io_ctx()
+
+---
+ block/fops.c           | 12 +++++++++---
+ include/linux/blkdev.h |  3 +++
+ 2 files changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/block/fops.c b/block/fops.c
+index b68fc3d4c..6d5b3dc65 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -930,10 +930,9 @@ static int blkdev_mmap_prepare(struct vm_area_desc *desc)
+ 	return generic_file_mmap_prepare(desc);
+ }
+ 
+-static int blkdev_init_dma_buf_io_ctx(struct file *file,
+-				      struct dma_buf_io_ctx *ctx)
++int bdev_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
++			     struct dma_buf_io_ctx *ctx)
+ {
+-	struct block_device *bdev = file_bdev(file);
+ 	struct gendisk *disk = bdev->bd_disk;
+ 
+ 	if (!(file->f_flags & O_DIRECT))
+@@ -944,6 +943,13 @@ static int blkdev_init_dma_buf_io_ctx(struct file *file,
+ 		return -EOPNOTSUPP;
+ 	return disk->fops->init_dma_buf_io_ctx(bdev, ctx);
+ }
++EXPORT_SYMBOL_GPL(bdev_init_dma_buf_io_ctx);
++
++static int blkdev_init_dma_buf_io_ctx(struct file *file,
++				      struct dma_buf_io_ctx *ctx)
++{
++	return bdev_init_dma_buf_io_ctx(file, file_bdev(file), ctx);
++}
+ 
+ const struct file_operations def_blk_fops = {
+ 	.open		= blkdev_open,
+diff --git a/include/linux/blkdev.h b/include/linux/blkdev.h
+index 9f4c92e51..93eac5ac6 100644
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -1695,6 +1695,9 @@ struct block_device_operations {
+ 	int (*alternative_gpt_sector)(struct gendisk *disk, sector_t *sector);
+ };
+ 
++int bdev_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
++			     struct dma_buf_io_ctx *ctx);
++
+ #ifdef CONFIG_COMPAT
+ extern int blkdev_compat_ptr_ioctl(struct block_device *, blk_mode_t,
+ 				      unsigned int, unsigned long);
+-- 
+2.53.0
+

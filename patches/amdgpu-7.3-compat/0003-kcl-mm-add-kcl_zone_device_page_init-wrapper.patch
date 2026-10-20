@@ -1,0 +1,42 @@
+Add kcl_zone_device_page_init() inline wrapper to handle all three variants.
+
+When zone_device_page_init() is available from the kernel (1-arg or 3-arg),
+callers need to use the right form.  Provide an inline wrapper that routes
+to the correct call based on the HAVE_ flags set by the autoconf probe:
+
+  - HAVE_ZONE_DEVICE_PAGE_INIT_3ARGS: call zone_device_page_init(page,
+    page_pgmap(page), 0), which is the v7.x 3-arg form for single-page init.
+  - HAVE_ZONE_DEVICE_PAGE_INIT (1-arg): call zone_device_page_init(page)
+    directly.
+  - Neither flag: call the kcl fallback zone_device_page_init(page).
+
+This wrapper replaces direct calls to zone_device_page_init() at call sites
+that only handle single pages at order 0.
+
+--- a/include/kcl/kcl_mm.h
++++ b/include/kcl/kcl_mm.h
+@@ -31,6 +31,24 @@
+ void zone_device_page_init(struct page *page);
+ #endif
+
++#ifdef HAVE_ZONE_DEVICE_PAGE_INIT_3ARGS
++#include <linux/mmzone.h>
++static inline void kcl_zone_device_page_init(struct page *page)
++{
++	zone_device_page_init(page, page_pgmap(page), 0);
++}
++#elif defined(HAVE_ZONE_DEVICE_PAGE_INIT)
++static inline void kcl_zone_device_page_init(struct page *page)
++{
++	zone_device_page_init(page);
++}
++#else
++static inline void kcl_zone_device_page_init(struct page *page)
++{
++	zone_device_page_init(page);
++}
++#endif
++
+ #ifndef HAVE_FAULT_FLAG_ALLOW_RETRY_FIRST
+ static inline bool fault_flag_allow_retry_first(unsigned int flags)
+ {

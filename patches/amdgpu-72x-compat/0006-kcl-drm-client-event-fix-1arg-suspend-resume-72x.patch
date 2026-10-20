@@ -1,0 +1,60 @@
+--- a/include/kcl/kcl_drm_client_event.h	2026-10-20 08:45:47.309402437 -0600
++++ b/include/kcl/kcl_drm_client_event.h	2026-10-20 08:46:43.537775095 -0600
+@@ -2,11 +2,36 @@
+ #ifndef KCL_KCL_DRM_CLIENT_EVENT_H
+ #define KCL_KCL_DRM_CLIENT_EVENT_H
+ 
++#include <linux/version.h>
+ #include <drm/drm_fb_helper.h>
+ 
+ #ifndef HAVE_DRM_CLIENT_DEV_RESUME
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/*
++ * 7.2+ dropped holds_console_lock from drm_client_dev_suspend/resume.
++ * The kernel header provides 1-arg versions; define 2-arg wrappers here
++ * under different internal names so that call sites continue to compile
++ * without change.
++ */
++#include <drm/drm_client_event.h>
++static inline void _kcl_drm_client_dev_suspend(struct drm_device *dev,
++						bool holds_console_lock)
++{
++	drm_client_dev_suspend(dev);
++}
++static inline void _kcl_drm_client_dev_resume(struct drm_device *dev,
++					       bool holds_console_lock)
++{
++	drm_client_dev_resume(dev);
++}
++#undef drm_client_dev_suspend
++#undef drm_client_dev_resume
++#define drm_client_dev_suspend _kcl_drm_client_dev_suspend
++#define drm_client_dev_resume  _kcl_drm_client_dev_resume
++#else
+ void drm_client_dev_suspend(struct drm_device *dev, bool holds_console_lock);
+ void drm_client_dev_resume(struct drm_device *dev, bool holds_console_lock);
+-#endif
++#endif /* LINUX_VERSION_CODE */
++#endif /* HAVE_DRM_CLIENT_DEV_RESUME */
+ 
+ #endif
+--- a/amd/amdkcl/kcl_drm_client_event.c	2026-10-20 08:45:47.313406213 -0600
++++ b/amd/amdkcl/kcl_drm_client_event.c	2026-10-20 08:47:07.121449387 -0600
+@@ -1,6 +1,10 @@
++#include <linux/version.h>
+ #include <kcl/kcl_drm_client_event.h>
+ 
+ #ifndef HAVE_DRM_CLIENT_DEV_RESUME
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
++/* On 7.2+ the kernel provides drm_client_dev_suspend/resume with a single
++ * argument; the kcl header provides inline wrappers for the 2-arg callers. */
+ void drm_client_dev_resume(struct drm_device *dev, bool holds_console_lock)
+ {
+ 	drm_fb_helper_set_suspend_unlocked(dev->fb_helper, holds_console_lock);
+@@ -13,4 +17,5 @@
+ 	drm_fb_helper_set_suspend_unlocked(dev->fb_helper, suspend);
+ }
+ EXPORT_SYMBOL(drm_client_dev_suspend);
+-#endif
++#endif /* LINUX_VERSION_CODE */
++#endif /* HAVE_DRM_CLIENT_DEV_RESUME */
