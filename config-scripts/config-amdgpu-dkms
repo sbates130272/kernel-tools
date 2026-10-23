@@ -26,5 +26,9 @@
 ./scripts/config -m DRM_AMDGPU
 ./scripts/config -e DRM_AMDGPU_USERPTR
 
+# KFD (kernel fusion driver) — required for /dev/kfd and hipMalloc
+./scripts/config -m HSA_AMD
+./scripts/config -e HSA_AMD_SVM
+
 # Required for the DMA-BUF XFS iomap P2P test
 ./scripts/config -m XFS_FS

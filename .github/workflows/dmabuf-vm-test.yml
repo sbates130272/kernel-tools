@@ -20,7 +20,7 @@ on:
 
 env:
   VM_IMAGES_DIR: /var/lib/qemu-tool/images
-  QCOW2_TAG: "20261022.g1177df0-vm.resolute-ernic-rocjitsu-slim-qm.c079195-qcow2"
+  QCOW2_TAG: "20261022.g1177df0-vm.resolute-ernic-rocjitsu-qm.c079195-qcow2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -59,7 +59,7 @@ jobs:
           apt-get update -qq
           apt-get install -y \
             bc bison build-essential ccache debhelper flex gawk iproute2 \
-            kmod libdw-dev libelf-dev libncurses-dev libssl-dev nasm \
+            dkms kmod libdw-dev libelf-dev libncurses-dev libssl-dev nasm \
             pahole rsync
 
       - name: Cache pip

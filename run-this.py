@@ -34,8 +34,8 @@ from pathlib import Path
 REPO_DIR    = Path(__file__).resolve().parent
 QCOW2_IMAGE = (
     "docker.io/sbates130272/"
-    "batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu-slim:"
-    "20261022.g1177df0-vm.resolute-ernic-rocjitsu-slim-qm.c079195-qcow2"
+    "batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:"
+    "20261022.g1177df0-vm.resolute-ernic-rocjitsu-qm.c079195-qcow2"
 )
 ROCJITSU_IMAGE = (
     "docker.io/sbates130272/"
@@ -47,7 +47,12 @@ QEMU_IMAGE = (
     "batesste-ci-images-ubuntu-qemu-libvfio-user-sbates-fork:"
     "20261022.g1177df0-qemu.f91f120-vfu.3719c3a"
 )
-VM_IMAGES_DIR   = Path(os.environ.get("VM_IMAGES_DIR", "/var/lib/qemu-tool/images"))
+VM_IMAGES_DIR   = Path(os.environ.get(
+    "VM_IMAGES_DIR",
+    "/var/lib/qemu-tool/images"
+    if Path("/var/lib/qemu-tool").exists() or os.getuid() == 0
+    else str(Path.home() / ".local/share/qemu-tool/images")
+))
 VM_SSH_PORT     = int(os.environ.get("VM_SSH_PORT", "2232"))
 VM_SSH_HOST     = os.environ.get("VM_SSH_HOST", "localhost")
 VM_NAME         = "dmabuf-test"
@@ -146,9 +151,16 @@ def _vm_scp_args() -> list[str]:
 
 
 def vm_is_up() -> bool:
+    # Try qemu-tool inspect first (v1.5+); fall back to docker container check.
     r = run(["qemu-tool", "inspect", "--vm-name", VM_NAME],
-            check=False, capture=True)
-    return r.returncode == 0
+            check=False, capture=True, stderr=subprocess.DEVNULL)
+    if r.returncode == 0:
+        return True
+    # inspect subcommand absent in older qemu-tool — check for the QEMU container.
+    r2 = run(["docker", "inspect", "--format", "{{.State.Running}}",
+              f"vfio-user-rocjitsu-vm-qemu-1"],
+             check=False, capture=True, stderr=subprocess.DEVNULL)
+    return r2.returncode == 0 and r2.stdout.strip() == "true"
 
 
 def wait_for_ssh(ssh_args: list[str], *, timeout=300, interval=3):
@@ -392,6 +404,14 @@ def _copy_amdgpu_src(vm_user: str, scp: list[str]) -> bool:
         print(f"amdgpu source already at {AMDGPU_SRC_HOST}, skipping scp")
         return True
 
+    # Check if amdgpu-dkms is installed on the runner host (CI pre-install step).
+    host_srcs = sorted(Path("/usr/src").glob("amdgpu-*/amd/dkms"))
+    if host_srcs:
+        host_src = host_srcs[-1].parent  # newest version
+        print(f"Using amdgpu source from host: {host_src}")
+        shutil.copytree(host_src, AMDGPU_SRC_HOST)
+        return True
+
     ssh = _vm_ssh_args(vm_user)
 
     def _find_and_copy(remote_path: str) -> bool:
@@ -407,8 +427,12 @@ def _copy_amdgpu_src(vm_user: str, scp: list[str]) -> bool:
 
     # Install amdgpu-dkms if not present, then discover actual source path.
     print("amdgpu source not at expected path, installing amdgpu-dkms in VM...")
-    r_apt = run(ssh + ["apt-get install -y --allow-unauthenticated amdgpu-dkms"],
-                check=False, capture=True)
+    r_apt = run(ssh + [
+                    "apt-get",
+                    "-o", "Acquire::https::Verify-Peer=false",
+                    "-o", "Acquire::https::Verify-Host=false",
+                    "install", "-y", "--allow-unauthenticated", "amdgpu-dkms"],
+                check=False, capture=True, sudo=True)
     if r_apt.returncode != 0:
         print(f"apt-get failed (exit {r_apt.returncode}):\n{r_apt.stdout[-500:]}")
 
@@ -438,27 +462,35 @@ def _copy_amdgpu_src(vm_user: str, scp: list[str]) -> bool:
 
 def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
                      amdgpu_future=None) -> str | None:
-    """Build amdgpu-dkms for KVER. Returns MODULES_DIR or None."""
-    amdgpu_short = AMDGPU_VER.split("-")[0]
-    modules_dir = Path(
-        f"/var/lib/dkms/amdgpu/{amdgpu_short}-src/{kver}/x86_64/module")
+    """Build amdgpu-dkms for KVER without root. Returns MODULES_DIR or None.
 
-    # Check for cached .ko files first — if they exist we can skip everything
-    # including the amdgpu source copy and the DKMS build.
-    ko_files = list(modules_dir.glob("*.ko*")) if modules_dir.exists() else []
-    if ko_files:
+    Uses --dkmstree and --sourcetree to keep all DKMS state in user-owned
+    temp directories. Kernel headers are extracted (not installed) via
+    dpkg-deb --extract so /usr/src is never touched.
+    """
+    # All DKMS state goes into a user-owned tree under /tmp.
+    dkms_tree = Path("/tmp/dkms-build")
+    headers_dir = Path(f"/tmp/headers-{kver}")
+
+    # Check for cached .ko files first — skip everything on a warm path.
+    # modules_dir is determined after reading dkms.conf (pkg_ver may differ
+    # from AMDGPU_VER), so we glob for any matching build under dkms_tree.
+    cached_kos = list(dkms_tree.glob(f"amdgpu/*/{kver}/x86_64/module/*.ko*"))
+    if cached_kos:
+        modules_dir = cached_kos[0].parent
         print(f"DKMS modules already built for {kver}, skipping rebuild")
-        # Still drain the future so the thread pool exits cleanly.
         if amdgpu_future is not None:
             amdgpu_future.result()
         with _Timer("dkms build (warm — skipped)") as t:
             t.cold = False
         return str(modules_dir)
 
-    with _Timer("install kernel headers"):
+    with _Timer("extract kernel headers (no root)"):
         hdrs = glob.glob(f"/tmp/linux-headers-{kver}_*.deb")
-        if hdrs:
-            run(["dpkg", "-i", *hdrs], sudo=True, check=False)
+        if hdrs and not headers_dir.exists():
+            headers_dir.mkdir(parents=True, exist_ok=True)
+            run(["dpkg-deb", "--extract", hdrs[0], str(headers_dir)])
+        kernelsourcedir = headers_dir / "usr" / "src" / f"linux-headers-{kver}"
 
     with _Timer("amdgpu source copy") as t:
         if amdgpu_future is not None:
@@ -471,31 +503,49 @@ def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
         if AMDGPU_SRC_HOST.exists() and amdgpu_future is None:
             t.cold = False
 
-    with _Timer("dkms build amdgpu"):
-        run(["ln", "-sfn", str(AMDGPU_SRC_HOST),
-             f"/usr/src/amdgpu-{amdgpu_short}-src"], sudo=True)
+    with _Timer("dkms build amdgpu (rootless)"):
         compat_patch = (REPO_DIR / "patches/amdgpu-72x-compat" /
                         "0021-kcl-drm-fb-define-HAVE-fill-info-for-7.2plus.patch")
-        run(["patch", "-d", str(AMDGPU_SRC_HOST), "-p1",
-             "--forward", "--fuzz=3", f"--input={compat_patch}"],
-            sudo=True, check=False)
-        # Inject ccache into dkms.conf (mirrors scripts/build-amdgpu-dkms).
+        run(["patch", "--batch", "-d", str(AMDGPU_SRC_HOST), "-p1",
+             "--forward", "--fuzz=3", "--reject-file=/dev/null",
+             f"--input={compat_patch}"],
+            check=False, stdin=subprocess.DEVNULL)
+
         dkms_conf = AMDGPU_SRC_HOST / "amd/dkms/dkms.conf"
+        amdgpu_short = AMDGPU_VER.split("-")[0]
+        pkg_ver = f"{amdgpu_short}-src"  # fallback
+        if dkms_conf.exists():
+            for line in dkms_conf.read_text().splitlines():
+                if line.startswith("PACKAGE_VERSION="):
+                    pkg_ver = line.split("=", 1)[1].strip("\"'")
+                    break
+        dkms_name = f"amdgpu/{pkg_ver}"
+        modules_dir = dkms_tree / "amdgpu" / pkg_ver / kver / "x86_64" / "module"
+        print(f"DKMS name: {dkms_name}  tree: {dkms_tree}")
+
+        # Inject ccache into dkms.conf.
         if shutil.which("ccache") and dkms_conf.exists():
             content = dkms_conf.read_text()
             if "ccache" not in content:
-                patched = re.sub(
+                dkms_conf.write_text(re.sub(
                     r"(MAKE\[0\]=\"'make')('.*)",
                     r"\1 CC='ccache gcc'\2",
                     content,
-                )
-                dkms_conf.write_text(patched)
+                ))
                 print("ccache injected into dkms.conf")
-        dkms_name = f"amdgpu/{amdgpu_short}-src"
-        run(["dkms", "add", dkms_name], sudo=True, check=False)
-        run(["dkms", "build", dkms_name, "-k", kver,
-             "--kernelsourcedir", f"/usr/src/linux-headers-{kver}"],
-            sudo=True, check=False)
+
+        dkms_tree.mkdir(parents=True, exist_ok=True)
+        # dkms --sourcetree DIR expects source at DIR/amdgpu-{pkg_ver}/.
+        # Create a user-owned symlink with the expected name if needed.
+        source_link = AMDGPU_SRC_HOST.parent / f"amdgpu-{pkg_ver}"
+        if not source_link.exists() and source_link != AMDGPU_SRC_HOST:
+            source_link.symlink_to(AMDGPU_SRC_HOST)
+        # --dkmstree: redirect /var/lib/dkms  --sourcetree: redirect /usr/src
+        common = ["--dkmstree", str(dkms_tree),
+                  "--sourcetree", str(AMDGPU_SRC_HOST.parent)]
+        run(["dkms", "add", *common, dkms_name], check=False)
+        run(["dkms", "build", *common, dkms_name, "-k", kver,
+             "--kernelsourcedir", str(kernelsourcedir)], check=False)
 
     return str(modules_dir) if modules_dir.exists() else None
 
@@ -541,6 +591,12 @@ def stage_install_and_reboot(kver: str, modules_dir: str | None,
         # updates/dkms/. Without them (slim VMs), let the in-tree module load.
         if ls /usr/lib/modules/{kver}/updates/dkms/amdgpu.ko 2>/dev/null; then
           echo "blacklist amdgpu" > /usr/lib/modprobe.d/blacklist_linux_{kver}.conf
+        else
+          # Slim VMs bake modprobe.blacklist=amdgpu into the GRUB cmdline.
+          # Strip it from sources; also patch the generated grub.cfg directly.
+          sed -i 's/modprobe.blacklist=amdgpu//g' /etc/default/grub || true
+          find /etc/default/grub.d/ -name '*.cfg' \
+            -exec sed -i 's/modprobe.blacklist=amdgpu//g' {{}} + 2>/dev/null || true
         fi
         echo "options amdgpu emu_mode=1 fw_load_type=0 discovery=2 ip_block_mask=0x7f vm_update_mode=3 gpu_recovery=0 vramlimit=1024" \\
           > /etc/modprobe.d/amdgpu-rocjitsu.conf
@@ -552,6 +608,7 @@ def stage_install_and_reboot(kver: str, modules_dir: str | None,
           > /etc/default/grub.d/99-pinned-kernel.cfg
         grub-editenv /boot/grub/grubenv unset next_entry
         update-grub
+        sed -i 's/ modprobe.blacklist=amdgpu//g' /boot/grub/grub.cfg || true
     """)
 
     with _Timer("install kernel in VM + reboot"):
@@ -610,6 +667,18 @@ def stage_reconnect(ssh: list[str]):
 
 def stage_load_amdgpu(ssh: list[str]):
     with _Timer("amdgpu probe"):
+        # When no DKMS modules are installed, the VM may have booted with
+        # modprobe.blacklist=amdgpu in the kernel cmdline (set by grub in the
+        # slim VM). Override this via modprobe.d --ignore-install so the
+        # in-tree amdgpu can load regardless of the cmdline blacklist.
+        amdgpu_opts = ("emu_mode=1 fw_load_type=0 discovery=2 "
+                       "ip_block_mask=0x7f vm_update_mode=3 "
+                       "gpu_recovery=0 vramlimit=1024")
+        run(ssh + [
+            "sudo bash -c "
+            f"'echo \"install amdgpu /sbin/modprobe --ignore-install amdgpu {amdgpu_opts}\" "
+            "> /etc/modprobe.d/99-force-amdgpu.conf'"
+        ], check=False)
         run(ssh + ["sudo /usr/local/bin/amdgpu-probe"])
         time.sleep(8)
         run(ssh + ["ls /dev/kfd /dev/dri/renderD128"])
@@ -641,18 +710,41 @@ def stage_p2p_tests(ssh: list[str], scp: list[str]):
     test_dir = REPO_DIR / "userspace/amdgpu-dmabuf-io"
     binary = Path("/tmp/test_p2p_io")
 
-    with _Timer("build test binary on host") as t:
+    with _Timer("build test binary") as t:
         if binary.exists():
             print(f"Using pre-built {binary}")
             t.cold = False
         else:
-            hipcc = shutil.which("hipcc") or "/opt/rocm/bin/hipcc"
-            run(["make", f"CXX={hipcc}", f"OUTPUT={binary}"],
-                cwd=test_dir, check=False)
+            # Try to build on host if hipcc is available.
+            hipcc = (shutil.which("hipcc")
+                     or next((str(p) for p in [
+                         Path("/opt/rocm/bin/hipcc"),
+                         *sorted(Path("/opt/rocm").glob("core-*/bin/hipcc")),
+                     ] if Path(p).exists()), None))
+            if hipcc:
+                run(["make", f"CXX={hipcc}"], cwd=test_dir, check=False)
+                built = test_dir / "test_p2p_io"
+                if built.exists():
+                    shutil.copy(built, binary)
             if not binary.exists():
-                # Makefile may not support OUTPUT= — build in-tree then move
-                run(["make", f"CXX={hipcc}"], cwd=test_dir)
-                shutil.copy(test_dir / "test_p2p_io", binary)
+                # hipcc absent (CI runner without ROCm) — build inside the VM.
+                print("hipcc not on host; building test binary inside VM...")
+                run([*scp, "-r", str(test_dir), f"{ssh[-1]}:/tmp/"])
+                build_script = textwrap.dedent("""\
+                    set -e
+                    ROCM=$(ls -d /opt/rocm/core-* 2>/dev/null | sort -V | tail -1)
+                    cd /tmp/amdgpu-dmabuf-io
+                    make CXX=${ROCM}/bin/hipcc \
+                         CXXFLAGS="-O3 -I/usr/include/libdrm -I${ROCM}/include"
+                """)
+                proc = subprocess.Popen(ssh + ["sudo bash -s"],
+                                        stdin=subprocess.PIPE)
+                proc.communicate(build_script.encode())
+                if proc.returncode != 0:
+                    sys.exit("Failed to build test binary in VM")
+                # Pull the binary back to host for caching.
+                run([*scp, f"{ssh[-1]}:/tmp/amdgpu-dmabuf-io/test_p2p_io",
+                     str(binary)], check=False)
 
     with _Timer("scp test binary"):
         run([*scp, str(binary), f"{ssh[-1]}:/tmp/"])
@@ -708,19 +800,29 @@ def do_clean(full: bool = False):
         if p.exists():
             p.unlink()
             removed.append(str(p))
-    # Remove DKMS module cache for our kernel label so modules are rebuilt fresh.
-    amdgpu_short = AMDGPU_VER.split("-")[0]
-    dkms_base = Path(f"/var/lib/dkms/amdgpu/{amdgpu_short}-src")
-    if dkms_base.exists():
-        for d in dkms_base.iterdir():
-            if KERNEL_LABEL in d.name:
-                shutil.rmtree(d, ignore_errors=True)
-                removed.append(str(d))
+    # --clean: remove DKMS builds matching the current kernel label.
+    # --clean-full: remove the entire /tmp/dkms-build tree.
+    dkms_tree = Path("/tmp/dkms-build")
+    if full and dkms_tree.exists():
+        shutil.rmtree(dkms_tree, ignore_errors=True)
+        removed.append(str(dkms_tree))
+    elif dkms_tree.exists():
+        for kver_dir in dkms_tree.glob(f"amdgpu/*/{'{'}*{KERNEL_LABEL}*{'}'}"):
+            shutil.rmtree(kver_dir, ignore_errors=True)
+            removed.append(str(kver_dir))
+    # Also clean extracted headers for any of our kernel builds.
+    for hdr_dir in Path("/tmp").glob(f"headers-*{KERNEL_LABEL}*"):
+        shutil.rmtree(hdr_dir, ignore_errors=True)
+        removed.append(str(hdr_dir))
     # Remove amdgpu source copy so the SCP from the VM is retried fresh.
     if AMDGPU_SRC_HOST.exists():
         shutil.rmtree(AMDGPU_SRC_HOST, ignore_errors=True)
         removed.append(str(AMDGPU_SRC_HOST))
     if full:
+        # Tear down the VM first to release qcow2 file locks.
+        print("Tearing down VM before removing images...")
+        run(["qemu-tool", "compose", "--stack", "vfio-user-rocjitsu-vm", "down"],
+            env=compose_env(), check=False)
         for p in [
             VM_IMAGES_DIR / f"{VM_NAME}-backing.qcow2",
             VM_IMAGES_DIR / "vm-info.json",
