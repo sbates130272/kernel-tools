@@ -51,8 +51,8 @@ VM_IMAGES_DIR   = Path(os.environ.get("VM_IMAGES_DIR", "/var/lib/qemu-tool/image
 VM_SSH_PORT     = int(os.environ.get("VM_SSH_PORT", "2232"))
 VM_SSH_HOST     = os.environ.get("VM_SSH_HOST", "localhost")
 VM_NAME         = "dmabuf-test"
-VM_VCPUS        = int(os.environ.get("VM_VCPUS", "8"))
-VM_MEM      = int(os.environ.get("VM_MEM", "16384"))
+VM_VCPUS        = int(os.environ.get("VM_VCPUS", "4"))
+VM_MEM      = int(os.environ.get("VM_MEM", "4096"))
 KERNEL_LABEL    = "-dmabuf-72x"
 KERNEL_BRANCH   = os.environ.get("KERNEL_BRANCH", "v7.2.4")
 KERNEL_SRC      = Path(os.environ.get("KERNEL_SRC", "/tmp/linux-dmabuf"))
@@ -108,7 +108,7 @@ def run(cmd: list[str] | str, *, check=True, env=None, cwd=None,
         capture=False, sudo=False, **kw) -> subprocess.CompletedProcess:
     if isinstance(cmd, str):
         cmd = shlex.split(cmd)
-    if sudo:
+    if sudo and os.getuid() != 0 and shutil.which("sudo"):
         cmd = ["sudo"] + cmd
     merged_env = {**os.environ, **(env or {})}
     stdout = subprocess.PIPE if capture else None
@@ -382,15 +382,58 @@ def stage_build_kernel(ssh: list[str], scp: list[str]) -> str:
 # ---------------------------------------------------------------------------
 
 def _copy_amdgpu_src(vm_user: str, scp: list[str]) -> bool:
-    """SCP amdgpu source from VM. Returns True on success or already present."""
+    """SCP amdgpu source from VM. Returns True on success or already present.
+
+    Tries the known path first. If absent, installs amdgpu-dkms in the VM
+    and discovers the actual source path dynamically (slim VMs ship a
+    different version string or no DKMS source at all).
+    """
     if AMDGPU_SRC_HOST.exists():
         print(f"amdgpu source already at {AMDGPU_SRC_HOST}, skipping scp")
         return True
-    r = run([*scp, "-r",
-             f"{vm_user}@{VM_SSH_HOST}:{AMDGPU_SRC_VM}",
-             str(AMDGPU_SRC_HOST)],
+
+    ssh = _vm_ssh_args(vm_user)
+
+    def _find_and_copy(remote_path: str) -> bool:
+        r = run([*scp, "-r",
+                 f"{vm_user}@{VM_SSH_HOST}:{remote_path}",
+                 str(AMDGPU_SRC_HOST)],
+                check=False, capture=True, stderr=subprocess.DEVNULL)
+        return r.returncode == 0
+
+    # Try the expected path first.
+    if _find_and_copy(AMDGPU_SRC_VM):
+        return True
+
+    # Install amdgpu-dkms if not present, then discover actual source path.
+    print("amdgpu source not at expected path, installing amdgpu-dkms in VM...")
+    r_apt = run(ssh + ["apt-get install -y --allow-unauthenticated amdgpu-dkms"],
+                check=False, capture=True)
+    if r_apt.returncode != 0:
+        print(f"apt-get failed (exit {r_apt.returncode}):\n{r_apt.stdout[-500:]}")
+
+    # Find where the source landed — version string may differ from AMDGPU_VER.
+    r = run(ssh + ["ls -d /usr/src/amdgpu-*/"],
             check=False, capture=True, stderr=subprocess.DEVNULL)
-    return r.returncode == 0
+    if r.returncode == 0 and r.stdout.strip():
+        remote_path = r.stdout.strip().split()[0].rstrip("/")
+        print(f"Found amdgpu source at {remote_path}")
+        return _find_and_copy(remote_path)
+
+    # Last resort: use amdgpu source from this repo (amdgpu-build/).
+    local_src = next(
+        (p for p in sorted((REPO_DIR / "amdgpu-build").glob("amdgpu-roc-*"))
+         if (p / "amd" / "dkms").exists()),
+        None,
+    )
+    if local_src:
+        print(f"Using repo amdgpu source: {local_src}")
+        import shutil as _shutil
+        _shutil.copytree(local_src, AMDGPU_SRC_HOST)
+        return True
+
+    print("WARNING: no amdgpu source found anywhere")
+    return False
 
 
 def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
@@ -399,6 +442,18 @@ def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
     amdgpu_short = AMDGPU_VER.split("-")[0]
     modules_dir = Path(
         f"/var/lib/dkms/amdgpu/{amdgpu_short}-src/{kver}/x86_64/module")
+
+    # Check for cached .ko files first — if they exist we can skip everything
+    # including the amdgpu source copy and the DKMS build.
+    ko_files = list(modules_dir.glob("*.ko*")) if modules_dir.exists() else []
+    if ko_files:
+        print(f"DKMS modules already built for {kver}, skipping rebuild")
+        # Still drain the future so the thread pool exits cleanly.
+        if amdgpu_future is not None:
+            amdgpu_future.result()
+        with _Timer("dkms build (warm — skipped)") as t:
+            t.cold = False
+        return str(modules_dir)
 
     with _Timer("install kernel headers"):
         hdrs = glob.glob(f"/tmp/linux-headers-{kver}_*.deb")
@@ -415,13 +470,6 @@ def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
             return None
         if AMDGPU_SRC_HOST.exists() and amdgpu_future is None:
             t.cold = False
-
-    ko_files = list(modules_dir.glob("*.ko*")) if modules_dir.exists() else []
-    if ko_files:
-        print(f"DKMS modules already built for {kver}, skipping rebuild")
-        with _Timer("dkms build (warm — skipped)") as t:
-            t.cold = False
-        return str(modules_dir)
 
     with _Timer("dkms build amdgpu"):
         run(["ln", "-sfn", str(AMDGPU_SRC_HOST),
@@ -489,7 +537,11 @@ def stage_install_and_reboot(kver: str, modules_dir: str | None,
           done
           depmod -a {kver}
         fi
-        echo "blacklist amdgpu" > /usr/lib/modprobe.d/blacklist_linux_{kver}.conf
+        # Blacklist the in-tree amdgpu only when we have DKMS overrides in
+        # updates/dkms/. Without them (slim VMs), let the in-tree module load.
+        if ls /usr/lib/modules/{kver}/updates/dkms/amdgpu.ko 2>/dev/null; then
+          echo "blacklist amdgpu" > /usr/lib/modprobe.d/blacklist_linux_{kver}.conf
+        fi
         echo "options amdgpu emu_mode=1 fw_load_type=0 discovery=2 ip_block_mask=0x7f vm_update_mode=3 gpu_recovery=0 vramlimit=1024" \\
           > /etc/modprobe.d/amdgpu-rocjitsu.conf
         mkdir -p /lib/firmware/amdgpu
@@ -664,6 +716,10 @@ def do_clean(full: bool = False):
             if KERNEL_LABEL in d.name:
                 shutil.rmtree(d, ignore_errors=True)
                 removed.append(str(d))
+    # Remove amdgpu source copy so the SCP from the VM is retried fresh.
+    if AMDGPU_SRC_HOST.exists():
+        shutil.rmtree(AMDGPU_SRC_HOST, ignore_errors=True)
+        removed.append(str(AMDGPU_SRC_HOST))
     if full:
         for p in [
             VM_IMAGES_DIR / f"{VM_NAME}-backing.qcow2",

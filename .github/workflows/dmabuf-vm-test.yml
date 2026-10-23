@@ -1,6 +1,6 @@
 name: dmabuf-vm-test
 
-# Runs run-this.sh inside the QEMU CI container. That script does everything:
+# Runs run-this.py inside the QEMU CI container. That script does everything:
 # pull qcow2, boot VM with rocjitsu GPU (large-BAR) + NVMe, build kernel,
 # build amdgpu-dkms, install into VM, probe GPU, run raw-NVMe + XFS P2P tests.
 
@@ -15,11 +15,12 @@ on:
       - 'userspace/amdgpu-dmabuf-io/**'
       - 'config-scripts/config-amdgpu-dkms'
       - 'scripts/build-amdgpu-dkms'
-      - 'run-this.sh'
+      - 'run-this.py'
       - '.github/workflows/dmabuf-vm-test.yml'
 
 env:
   VM_IMAGES_DIR: /var/lib/qemu-tool/images
+  QCOW2_TAG: "20261022.g1177df0-vm.resolute-ernic-rocjitsu-slim-qm.c079195-qcow2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,8 +58,9 @@ jobs:
         run: |
           apt-get update -qq
           apt-get install -y \
-            bc bison build-essential debhelper flex iproute2 libdw-dev \
-            libelf-dev libncurses-dev libssl-dev nasm pahole
+            bc bison build-essential ccache debhelper flex gawk iproute2 \
+            kmod libdw-dev libelf-dev libncurses-dev libssl-dev nasm \
+            pahole rsync
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -69,6 +71,21 @@ jobs:
       - name: Install qemu-tool
         run: PIP_CACHE_DIR=/var/cache/pip-ci pip install --break-system-packages qemu-tool
 
+      - name: Cache VM backing image
+        id: qcow2-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.VM_IMAGES_DIR }}
+          key: qcow2-${{ env.QCOW2_TAG }}
+
+      - name: Cache ccache (kernel build acceleration)
+        uses: actions/cache@v4
+        with:
+          path: /root/.ccache
+          key: ccache-kernel-7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+          restore-keys: |
+            ccache-kernel-7.2.4-
+
       - name: Cache kernel debs
         id: kernel-deb-cache
         uses: actions/cache@v4
@@ -76,9 +93,22 @@ jobs:
           path: /var/cache/kernel-debs
           key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
 
+      - name: Cache DKMS modules
+        id: dkms-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/dkms-modules
+          key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+
       - name: Restore cached kernel debs into /tmp
         if: steps.kernel-deb-cache.outputs.cache-hit == 'true'
         run: cp /var/cache/kernel-debs/*.deb /tmp/ 2>/dev/null && echo "Kernel debs restored — build will be skipped" || true
+
+      - name: Restore cached DKMS modules
+        if: steps.dkms-cache.outputs.cache-hit == 'true'
+        run: |
+          mkdir -p /var/lib/dkms
+          cp -a /var/cache/dkms-modules/. /var/lib/dkms/ 2>/dev/null && echo "DKMS modules restored" || true
 
       - name: Resolve Docker bridge IP for VM SSH
         run: |
@@ -98,17 +128,38 @@ jobs:
           echo "VM_SSH_HOST=${IP}" >> "$GITHUB_ENV"
           echo "VM SSH host: ${IP}"
 
-      - name: Run run-this.sh
+      - name: Run run-this.py
         env:
-          QEMU_MINIMAL_DIR: ${{ github.workspace }}/qemu-minimal
           KERNEL_SRC: /tmp/linux-dmabuf
           KERNEL_BRANCH: v7.2.4
+          CCACHE_DIR: /root/.ccache
+          VM_SSH_PORT: "2222"
         run: |
-          chmod +x run-this.sh
-          ./run-this.sh
+          python3 run-this.py
 
-      - name: Save kernel debs to cache
-        if: steps.kernel-deb-cache.outputs.cache-hit != 'true'
+      - name: Populate kernel deb cache path
+        if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
         run: |
           mkdir -p /var/cache/kernel-debs
-          cp /tmp/linux-image-*.deb /tmp/linux-headers-*.deb /var/cache/kernel-debs/ 2>/dev/null || true
+          find /tmp -maxdepth 1 \( -name 'linux-image-*-dmabuf-72x*.deb' -o -name 'linux-headers-*-dmabuf-72x*.deb' \) \
+            ! -name '*-dbg_*' | xargs -r cp -t /var/cache/kernel-debs/ || true
+
+      - name: Save kernel debs to cache
+        if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/kernel-debs
+          key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+
+      - name: Populate DKMS modules cache path
+        if: always() && steps.dkms-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p /var/cache/dkms-modules
+          cp -a /var/lib/dkms/. /var/cache/dkms-modules/ 2>/dev/null || true
+
+      - name: Save DKMS modules to cache
+        if: always() && steps.dkms-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/dkms-modules
+          key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}
