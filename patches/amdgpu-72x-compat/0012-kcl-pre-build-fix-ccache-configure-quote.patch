@@ -1,0 +1,11 @@
+--- a/amd/dkms/pre-build.sh	2026-10-20 08:54:59.816420773 -0600
++++ b/amd/dkms/pre-build.sh	2026-10-20 08:55:07.528185714 -0600
+@@ -97,7 +97,7 @@
+ # otherwise conflicting package libpam-tmpdir incorrectly generates config
+ unset TMPDIR
+ 
+-(cd $SRC && ./configure CC=${CC})
++(cd $SRC && ./configure CC="${CC}")
+ 
+ # rename CFLAGS_<path>target.o / CFLAGS_REMOVE_<path> to CFLAGS_target.o
+ # for kernel version < 5.3

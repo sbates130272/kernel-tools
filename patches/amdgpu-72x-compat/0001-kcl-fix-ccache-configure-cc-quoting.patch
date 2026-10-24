@@ -1,0 +1,15 @@
+--- a/amd/dkms/Makefile	2026-10-20 08:58:08.051105606 -0600
++++ b/amd/dkms/Makefile	2026-10-20 08:58:15.390114697 -0600
+@@ -63,10 +63,10 @@
+ 	$(if $(call KCL_MACRO_CHECK_COMMAND, HAVE_RESERVATION_WW_CLASS_BUG), $(error reservation_ww_class is missing. exit...))
+ 
+ $(dkms-config): pre-build
+-	$(Q)amd/dkms/dkms-config.sh $@ $(KERNELVER) $(CC)
++	$(Q)amd/dkms/dkms-config.sh $@ $(KERNELVER) "$(CC)"
+ 
+ pre-build:
+-	$(Q)amd/dkms/pre-build.sh $(KERNELVER) $(module_src_dir) $(module_build_dir) $(CC)
++	$(Q)amd/dkms/pre-build.sh $(KERNELVER) $(module_src_dir) $(module_build_dir) "$(CC)"
+ 
+ clean:
+ 	$(Q)echo "Cleaning build files..."

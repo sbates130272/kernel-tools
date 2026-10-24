@@ -1,0 +1,20 @@
+--- a/amd/amdkcl/dma-buf/dma-resv.c	2026-10-20 08:38:20.068766405 -0600
++++ b/amd/amdkcl/dma-buf/dma-resv.c	2026-10-20 08:38:26.465847940 -0600
+@@ -652,7 +652,7 @@
+
+ 	array = dma_fence_array_create(count, fences,
+ 				       dma_fence_context_alloc(1),
+-				       1, false);
++				       1);
+ 	if (!array) {
+ 		while (count--)
+ 			dma_fence_put(fences[count]);
+--- a/amd/amdgpu/amdgpu_ids.c	2026-10-20 08:38:20.068766405 -0600
++++ b/amd/amdgpu/amdgpu_ids.c	2026-10-20 08:38:26.465847940 -0600
+@@ -237,7 +237,7 @@
+
+ 		array = dma_fence_array_create(i, fences, fence_context,
+-					       seqno, true);
++					       seqno);
+ 		if (!array) {
+ 			for (j = 0; j < i; ++j)

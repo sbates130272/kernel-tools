@@ -1,0 +1,24 @@
+--- a/amd/amdgpu/amdgpu_vm.h	2026-10-20 08:43:57.108038150 -0600
++++ b/amd/amdgpu/amdgpu_vm.h	2026-10-20 08:44:46.624073832 -0600
+@@ -31,6 +31,8 @@
+ #include <drm/drm_file.h>
+ #include <drm/ttm/ttm_bo.h>
+ #include <linux/sched/mm.h>
++#include <linux/version.h>
++#include <linux/dma-fence.h>
+ 
+ #include "amdgpu_sync.h"
+ #include "amdgpu_ring.h"
+@@ -645,7 +647,12 @@
+ 	 * sure that the dma_fence structure isn't freed up.
+ 	 */
+ 	rcu_read_lock();
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	/* dma_fence.lock removed in 7.2+; use dma_fence_spinlock() accessor */
++	lock = dma_fence_spinlock(vm->last_tlb_flush);
++#else
+ 	lock = vm->last_tlb_flush->lock;
++#endif
+ 	rcu_read_unlock();
+ 
+ 	spin_lock_irqsave(lock, flags);

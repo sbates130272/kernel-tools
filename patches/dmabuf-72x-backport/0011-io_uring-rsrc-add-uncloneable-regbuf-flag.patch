@@ -1,0 +1,43 @@
+From 28bfaaddb69329c4a7d35265977f0dc92b48a7eb Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:23 -0600
+Subject: [PATCH 11/20] io_uring/rsrc: add uncloneable regbuf flag
+
+---
+ io_uring/rsrc.c | 5 +++++
+ io_uring/rsrc.h | 3 ++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/io_uring/rsrc.c b/io_uring/rsrc.c
+index b71aa6547..6a4ffda47 100644
+--- a/io_uring/rsrc.c
++++ b/io_uring/rsrc.c
+@@ -1383,6 +1383,11 @@ static int io_clone_buffers(struct io_ring_ctx *ctx, struct io_ring_ctx *src_ctx
+ 		if (!src_node) {
+ 			dst_node = NULL;
+ 		} else {
++			if (src_node->buf->flags & IO_REGBUF_F_UNCLONEABLE) {
++				io_rsrc_data_free(ctx, &data);
++				return -EOPNOTSUPP;
++			}
++
+ 			dst_node = io_rsrc_node_alloc(ctx, IORING_RSRC_BUFFER);
+ 			if (!dst_node) {
+ 				io_rsrc_data_free(ctx, &data);
+diff --git a/io_uring/rsrc.h b/io_uring/rsrc.h
+index 98ae8ef51..83aa86e6f 100644
+--- a/io_uring/rsrc.h
++++ b/io_uring/rsrc.h
+@@ -29,7 +29,8 @@ enum {
+ };
+ 
+ enum {
+-	IO_REGBUF_F_KBUF		= 1,
++	IO_REGBUF_F_KBUF		= 1 << 0,
++	IO_REGBUF_F_UNCLONEABLE		= 1 << 1,
+ };
+ 
+ struct io_mapped_ubuf {
+-- 
+2.53.0
+

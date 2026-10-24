@@ -1,0 +1,50 @@
+--- a/include/kcl/kcl_mm.h	2026-10-20 09:13:40.792874320 -0600
++++ b/include/kcl/kcl_mm.h	2026-10-20 09:29:06.476749737 -0600
+@@ -7,6 +7,7 @@
+ #ifndef AMDKCL_MM_H
+ #define AMDKCL_MM_H
+ 
++#include <linux/version.h>
+ #include <linux/sched/mm.h>
+ #include <asm/page.h>
+ #include <linux/mm_types.h>
+@@ -172,4 +173,15 @@
+ #define follow_pfn _kcl_follow_pfn
+ #endif
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/* zap_vma_ptes() was replaced by zap_vma_range() in 7.2+, but that is not
++ * exported. For VM_PFNMAP/VM_MIXEDMAP VMAs (doorbell mappings), use the
++ * exported zap_special_vma_range() instead. */
++static inline void zap_vma_ptes(struct vm_area_struct *vma,
++				unsigned long address, unsigned long size)
++{
++	zap_special_vma_range(vma, address, size);
++}
++#endif
++
+ #endif /* AMDKCL_MM_H */
+--- a/amd/amdkfd/kfd_process.c	2026-10-20 09:14:41.462405608 -0600
++++ b/amd/amdkfd/kfd_process.c	2026-10-20 09:15:48.797874079 -0600
+@@ -21,6 +21,7 @@
+  * OTHER DEALINGS IN THE SOFTWARE.
+  */
+ 
++#include <linux/version.h>
+ #include <linux/mutex.h>
+ #include <linux/log2.h>
+ #include <linux/sched.h>
+@@ -2158,7 +2159,13 @@
+ 	if (!ef)
+ 		return -EINVAL;
+ 
++	/* dma_fence_signal() returns void in 7.2+; treat success as 0 */
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	dma_fence_signal(ef);
++	ret = 0;
++#else
+ 	ret = dma_fence_signal(ef);
++#endif
+ 	dma_fence_put(ef);
+ 
+ 	return ret;

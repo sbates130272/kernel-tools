@@ -1,0 +1,27 @@
+--- a/amd/amdkcl/kcl_drm_fb.c	2026-10-20 08:51:54.844319128 -0600
++++ b/amd/amdkcl/kcl_drm_fb.c	2026-10-20 08:52:09.212143288 -0600
+@@ -33,9 +33,17 @@
+ #include <drm/drm_crtc.h>
+ #include <drm/drm_crtc_helper.h>
+ #include <drm/drm_fourcc.h>
++#include <linux/version.h>
+ #include <kcl/kcl_drm_fb.h>
+ 
+-#ifndef HAVE_DRM_FB_HELPER_FILL_INFO
++/* drm_fb_helper_fill_info() is provided by the kernel in 7.2+.
++ * The autoconf test uses drmP.h (gone in 7.2+) so it fails to detect this.
++ * Skip the kcl implementation on these kernels. */
++#if !defined(HAVE_DRM_FB_HELPER_FILL_INFO) && LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
++#define _KCL_NEED_DRM_FB_FILL_INFO 1
++#endif
++
++#ifdef _KCL_NEED_DRM_FB_FILL_INFO
+ void drm_fb_helper_fill_info(struct fb_info *info,
+ 			     struct drm_fb_helper *fb_helper,
+ 			     struct drm_fb_helper_surface_size *sizes)
+@@ -52,4 +60,4 @@
+ 
+ }
+ EXPORT_SYMBOL(drm_fb_helper_fill_info);
+-#endif
++#endif /* _KCL_NEED_DRM_FB_FILL_INFO */

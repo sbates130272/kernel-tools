@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/amd/dkms/kcl_no_display_72x.h
+@@ -0,0 +1,7 @@
++/* SPDX-License-Identifier: MIT */
++/*
++ * Force-included by amd/amdgpu/Makefile on 7.2+ kernels to suppress
++ * CONFIG_DRM_AMD_DC guards referencing uncompiled display stack symbols.
++ */
++#undef CONFIG_DRM_AMD_DC
++#undef CONFIG_DRM_AMD_DC_FP

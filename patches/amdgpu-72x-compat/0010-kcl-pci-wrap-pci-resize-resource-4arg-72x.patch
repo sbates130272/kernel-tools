@@ -1,0 +1,18 @@
+--- a/include/kcl/kcl_pci.h	2026-10-20 08:52:34.937048871 -0600
++++ b/include/kcl/kcl_pci.h	2026-10-20 08:52:50.574572839 -0600
+@@ -228,4 +228,15 @@
+ #define PCI_IRQ_INTX PCI_IRQ_LEGACY
+ #endif
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/* pci_resize_resource() gained a 4th exclude_bars argument in 7.2+.
++ * Wrap the 3-arg call sites used by amdgpu. */
++#undef pci_resize_resource
++static inline int _kcl_pci_resize_resource(struct pci_dev *dev, int i, int size)
++{
++	return pci_resize_resource(dev, i, size, 0);
++}
++#define pci_resize_resource _kcl_pci_resize_resource
++#endif
++
+ #endif /* AMDKCL_PCI_H */

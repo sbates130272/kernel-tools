@@ -1,0 +1,94 @@
+From 577b1ffb6c3c26cba10b40e7be96d94beec5cef3 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:26 -0600
+Subject: [PATCH 16/20] iomap: add dma-buf direct I/O guards and registration
+
+---
+ fs/iomap/direct-io.c  | 31 ++++++++++++++++++++++++++++++-
+ include/linux/iomap.h |  3 +++
+ 2 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/fs/iomap/direct-io.c b/fs/iomap/direct-io.c
+index 01daed391..f4768ebd3 100644
+--- a/fs/iomap/direct-io.c
++++ b/fs/iomap/direct-io.c
+@@ -418,6 +418,10 @@ static int iomap_dio_bio_iter(struct iomap_iter *iter, struct iomap_dio *dio)
+ 	unsigned int alignment;
+ 	ssize_t ret = 0;
+ 
++	if (iov_iter_is_dmabuf_map(dio->submit.iter) &&
++	    (iomap->flags & IOMAP_F_INTEGRITY))
++		return -EOPNOTSUPP;
++
+ 	/*
+ 	 * File systems that write out of place and always allocate new blocks
+ 	 * need each bio to be block aligned as that's the unit of allocation.
+@@ -589,7 +593,13 @@ static int iomap_dio_bio_iter(struct iomap_iter *iter, struct iomap_dio *dio)
+ 
+ static int iomap_dio_hole_iter(struct iomap_iter *iter, struct iomap_dio *dio)
+ {
+-	loff_t length = iov_iter_zero(iomap_length(iter), dio->submit.iter);
++	loff_t length;
++
++	/* a device mapping cannot be zeroed from the CPU */
++	if (iov_iter_is_dmabuf_map(dio->submit.iter))
++		return -EOPNOTSUPP;
++
++	length = iov_iter_zero(iomap_length(iter), dio->submit.iter);
+ 
+ 	dio->size += length;
+ 	if (!length)
+@@ -606,6 +616,10 @@ static int iomap_dio_inline_iter(struct iomap_iter *iomi, struct iomap_dio *dio)
+ 	loff_t pos = iomi->pos;
+ 	u64 copied;
+ 
++	/* inline data is copied from the CPU, which a device mapping bypasses */
++	if (iov_iter_is_dmabuf_map(iter))
++		return -EOPNOTSUPP;
++
+ 	if (WARN_ON_ONCE(!inline_data))
+ 		return -EIO;
+ 
+@@ -704,6 +718,10 @@ __iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
+ 	if (!iomi.len)
+ 		return NULL;
+ 
++	/* bouncing copies the data from the CPU, which a device mapping bypasses */
++	if (iov_iter_is_dmabuf_map(iter) && (dio_flags & IOMAP_DIO_BOUNCE))
++		return ERR_PTR(-EOPNOTSUPP);
++
+ 	dio = kmalloc_obj(*dio);
+ 	if (!dio)
+ 		return ERR_PTR(-ENOMEM);
+@@ -908,3 +926,14 @@ iomap_dio_rw(struct kiocb *iocb, struct iov_iter *iter,
+ 	return iomap_dio_complete(dio);
+ }
+ EXPORT_SYMBOL_GPL(iomap_dio_rw);
++int iomap_file_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
++				   struct dma_buf_io_ctx *ctx)
++{
++	struct inode *inode = file_inode(file);
++
++	if (IS_DAX(inode))
++		return -EOPNOTSUPP;
++	return bdev_init_dma_buf_io_ctx(file, bdev, ctx);
++}
++EXPORT_SYMBOL_GPL(iomap_file_init_dma_buf_io_ctx);
++
+diff --git a/include/linux/iomap.h b/include/linux/iomap.h
+index 56b43d594..bdda33223 100644
+--- a/include/linux/iomap.h
++++ b/include/linux/iomap.h
+@@ -588,6 +588,9 @@ struct iomap_dio_ops {
+  */
+ #define IOMAP_DIO_FSBLOCK_ALIGNED	(1 << 3)
+ 
++int iomap_file_init_dma_buf_io_ctx(struct file *file, struct block_device *bdev,
++				   struct dma_buf_io_ctx *ctx);
++
+ /*
+  * Bounce buffer instead of using zero copy access.
+  *
+-- 
+2.53.0
+

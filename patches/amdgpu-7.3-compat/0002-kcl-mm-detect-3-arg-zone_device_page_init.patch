@@ -1,0 +1,41 @@
+Add 3-arg zone_device_page_init() detection probe.
+
+Linux v7.x changed zone_device_page_init() from a 1-argument exported
+symbol (void zone_device_page_init(struct page *)) to a 3-argument form:
+
+  void zone_device_page_init(struct page *page,
+                             struct dev_pagemap *pgmap,
+                             unsigned int order)
+
+The existing probe calls zone_device_page_init(NULL) which fails on v7.3
+because the function now requires three arguments.  The flag is therefore
+never set and kcl_mm.h re-declares zone_device_page_init with the old 1-arg
+prototype, conflicting with the kernel's 3-arg declaration in memremap.h
+(included transitively by hmm.h -> mm.h).
+
+Add a fallback probe that tries the 3-arg form and, on success, sets both
+HAVE_ZONE_DEVICE_PAGE_INIT and the new HAVE_ZONE_DEVICE_PAGE_INIT_3ARGS.
+
+--- a/amd/dkms/m4/zone_device_page_init.m4
++++ b/amd/dkms/m4/zone_device_page_init.m4
+@@ -12,6 +12,20 @@
+ 			], [zone_device_page_init], [mm/memremap.c], [
+ 				AC_DEFINE(HAVE_ZONE_DEVICE_PAGE_INIT, 1,
+ 					[zone_device_page_init() is available])
++		], [
++			dnl #
++			dnl # v7.x: zone_device_page_init() gained pgmap + order args
++			dnl #
++			AC_KERNEL_TRY_COMPILE_SYMBOL([
++					#include <linux/memremap.h>
++				], [
++					zone_device_page_init(NULL, NULL, 0);
++				], [zone_device_page_init], [mm/memremap.c], [
++					AC_DEFINE(HAVE_ZONE_DEVICE_PAGE_INIT, 1,
++						[zone_device_page_init() is available])
++					AC_DEFINE(HAVE_ZONE_DEVICE_PAGE_INIT_3ARGS, 1,
++						[zone_device_page_init() takes pgmap+order args])
++			])
+ 		])
+ 	])
+ ])

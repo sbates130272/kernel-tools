@@ -1,0 +1,24 @@
+--- a/include/kcl/kcl_dma-buf.h	2026-10-20 08:51:34.316300208 -0600
++++ b/include/kcl/kcl_dma-buf.h	2026-10-20 08:51:43.044174102 -0600
+@@ -7,6 +7,7 @@
+ #define _KCL_KCL__DMA_BUF_H__H__
+ 
+ #include <linux/dma-buf.h>
++#include <linux/version.h>
+ 
+ #ifndef HAVE_DMA_BUF_IS_DYNAMIC
+ static inline bool dma_buf_is_dynamic(struct dma_buf *dmabuf)
+@@ -15,4 +16,12 @@
+ }
+ #endif
+ 
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++/* dma_buf_move_notify() was renamed to dma_buf_invalidate_mappings() in 7.2+ */
++static inline void dma_buf_move_notify(struct dma_buf *dma_buf)
++{
++	dma_buf_invalidate_mappings(dma_buf);
++}
++#endif
++
+ #endif
+\ No newline at end of file

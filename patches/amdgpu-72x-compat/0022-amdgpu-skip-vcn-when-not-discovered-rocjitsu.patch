@@ -1,0 +1,19 @@
+diff --git a/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c b/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
+index 47e0680ed..9af982e3d 100644
+--- a/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
++++ b/drivers/gpu/drm/amd/amdgpu/amdgpu_discovery.c
+@@ -2652,7 +2652,13 @@ static int amdgpu_discovery_set_mm_ip_blocks(struct amdgpu_device *adev)
+ 			return -EINVAL;
+ 		}
+ 	} else {
+-		switch (amdgpu_ip_version(adev, UVD_HWIP, 0)) {
++		uint32_t vcn_version = amdgpu_ip_version(adev, UVD_HWIP, 0);
++
++		/* no VCN discovered; rocjitsu does not emulate it */
++		if (!vcn_version)
++			return 0;
++
++		switch (vcn_version) {
+ 		case IP_VERSION(1, 0, 0):
+ 		case IP_VERSION(1, 0, 1):
+ 			amdgpu_device_ip_block_add(adev, &vcn_v1_0_ip_block);

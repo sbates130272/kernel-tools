@@ -1,15 +1,8 @@
 name: dmabuf-vm-test
 
-# Two-job pipeline:
-#
-#   build-kernel  — plain ubuntu-latest runner, builds the DMA-BUF kernel
-#                   tarball using the same package list as build-remote-test.
-#   test-vm       — QEMU container with KVM, boots the ernic-rocjitsu qcow2
-#                   with one emulated NVMe, installs the tarball from job 1,
-#                   reboots, and verifies config knobs + NVMe device.
-#
-# Splitting the jobs means the QEMU container never needs kernel build tools
-# and the kernel build runner never needs QEMU or KVM.
+# Runs run-this.py inside the QEMU CI container. That script does everything:
+# pull qcow2, boot VM with rocjitsu GPU (large-BAR) + NVMe, build kernel,
+# build amdgpu-dkms, install into VM, probe GPU, run raw-NVMe + XFS P2P tests.
 
 on:
   workflow_dispatch:
@@ -17,108 +10,57 @@ on:
     branches-ignore:
       - main
     paths:
-      - 'scripts/run-dmabuf-vm-test.sh'
-      - 'scripts/build-latest-io-uring-dmabuf-kernel'
-      - 'scripts/build-remote'
-      - 'config-scripts/config-default'
-      - 'useful-configs/config-x86_64-p2pdma-qemu'
+      - 'patches/dmabuf-72x-backport/**'
+      - 'patches/amdgpu-72x-compat/**'
       - 'userspace/amdgpu-dmabuf-io/**'
+      - 'config-scripts/config-amdgpu-dkms'
+      - 'scripts/build-amdgpu-dkms'
+      - 'run-this.py'
       - '.github/workflows/dmabuf-vm-test.yml'
 
 env:
-  KERNEL_REMOTE: https://github.com/anuj7781/linux-kernel
-  KERNEL_BRANCH: anuj/fs-dmabuf-rfc-v11-desc-v2
-  LABEL: -dmabuf-v11-fs
-  QCOW2_IMAGE: docker.io/sbates130272/batesste-ci-images-ubuntu-qcow2-gen-ernic-rocjitsu:20261016.g9ef1ed8-vm.resolute-ernic-rocjitsu-qm.c5d51ce-qcow2
-  VM_NAME: dmabuf-test
-  VM_SSH_PORT: 2222
   VM_IMAGES_DIR: /var/lib/qemu-tool/images
+  QCOW2_TAG: "20261022.g1177df0-vm.resolute-ernic-rocjitsu-qm.c079195-qcow2"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Job 1: build the DMA-BUF kernel tarball on a plain runner
-  # ---------------------------------------------------------------------------
-  build-kernel:
-    name: build-kernel
+  dmabuf-vm-test:
+    name: dmabuf-vm-test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    steps:
-      - name: Check out kernel-tools
-        uses: actions/checkout@v4.3.1
-
-      - name: Fix git warning
-        run: git config --global init.defaultBranch main
-
-      - name: Install packages needed to build the linux kernel
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            bc \
-            bison \
-            build-essential \
-            flex \
-            libdw-dev \
-            libelf-dev \
-            libncurses-dev \
-            libssl-dev \
-            nasm \
-            pahole
-
-      - name: Clone DMA-BUF kernel source (depth 1)
-        run: git clone --depth 1 "$KERNEL_REMOTE" -b "$KERNEL_BRANCH" ./src
-
-      - name: Generate config and build kernel tarball
-        run: |
-          cd src
-          make defconfig
-          # Apply the same config-default fragment that build-remote uses so
-          # the built kernel matches what would be installed via build-remote.
-          source ../config-scripts/config-default
-          scripts/config --disable DEBUG_INFO
-          make olddefconfig
-          scripts/config --enable LOCALVERSION_AUTO
-          scripts/config --set-str LOCALVERSION "$LABEL"
-          make olddefconfig
-          # shellcheck disable=SC2046
-          make -j $(nproc) targz-pkg
-
-      - name: Upload kernel tarball
-        uses: actions/upload-artifact@v4
-        with:
-          name: dmabuf-kernel-tarball
-          path: src/linux-*.tar.gz
-          retention-days: 1
-
-  # ---------------------------------------------------------------------------
-  # Job 2: boot the VM, install the tarball, verify
-  # ---------------------------------------------------------------------------
-  test-vm:
-    name: test-vm
-    needs: build-kernel
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 120
     container:
       image: docker.io/sbates130272/batesste-ci-images-ubuntu-qemu-libvfio-user:20261016.g9ef1ed8-qemu11.1.2-vfu.8039244
-      options: --device /dev/kvm
+      options: >-
+        --device /dev/kvm
+        -v /var/run/docker.sock:/var/run/docker.sock
+        -v /var/lib/qemu-tool:/var/lib/qemu-tool
 
     steps:
       - name: Check out kernel-tools
         uses: actions/checkout@v4.3.1
 
-      - name: Verify KVM is available
-        run: |
-          test -c /dev/kvm || { echo "::error::/dev/kvm missing"; exit 1; }
-          python3 -c "import os, fcntl; fcntl.ioctl(os.open('/dev/kvm', os.O_RDWR), 0xAE00, 0)" \
-            || { echo "::error::/dev/kvm present but KVM_GET_API_VERSION failed"; exit 1; }
-          echo "KVM available: $(ls -l /dev/kvm)"
+      - name: Check out qemu-minimal (provides compose stacks)
+        uses: actions/checkout@v4.3.1
+        with:
+          repository: sbates130272/qemu-minimal
+          path: qemu-minimal
 
-      - name: Use a fixed pip cache directory
-        run: echo "PIP_CACHE_DIR=/var/cache/pip-ci" >> "$GITHUB_ENV"
+      - name: Set up git identity
+        run: |
+          git config --global init.defaultBranch main
+          git config --global user.email "ci@github-actions"
+          git config --global user.name "CI"
+
+      - name: Install kernel build deps
+        run: |
+          apt-get update -qq
+          apt-get install -y \
+            bc bison build-essential ccache debhelper flex gawk iproute2 \
+            dkms kmod libdw-dev libelf-dev libncurses-dev libssl-dev nasm \
+            pahole rsync
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -127,184 +69,97 @@ jobs:
           key: pip-qemu-tool-v2
 
       - name: Install qemu-tool
-        run: pip install --break-system-packages qemu-tool
+        run: PIP_CACHE_DIR=/var/cache/pip-ci pip install --break-system-packages qemu-tool
 
-      - name: Download kernel tarball from build-kernel job
-        uses: actions/download-artifact@v4
-        with:
-          name: dmabuf-kernel-tarball
-          path: /tmp/kernel-tarball
-
-      - name: Fetch VM SSH keys from OCI metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$VM_IMAGES_DIR/.oras-meta" "$HOME/.ssh"
-          oras manifest fetch "$QCOW2_IMAGE" > "$VM_IMAGES_DIR/.oras-meta/manifest.json"
-          oras discover --format json "$QCOW2_IMAGE" > "$VM_IMAGES_DIR/.oras-meta/referrers.json"
-
-          ref_digest=$(python3 - <<'PY'
-          import json, os
-          manifest = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/manifest.json"))
-          discover = json.load(open(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/referrers.json"))
-          referrers = discover.get("manifests", discover.get("referrers", []))
-          for ref in referrers:
-              if ref.get("artifactType") == "application/vnd.batesste.vm-info.v1":
-                  print(ref["digest"])
-                  break
-          PY
-          )
-
-          meta_dir="$VM_IMAGES_DIR/.oras-meta/vm-info"
-          mkdir -p "$meta_dir"
-          oras pull --output "$meta_dir" "${QCOW2_IMAGE%:*}@${ref_digest}"
-
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          info = json.loads(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/vm-info.json").read_text())
-          home = Path(os.environ["HOME"])
-          keys = info.get("ssh_keys") or {}
-          priv = Path(keys.get("private_key_path", "/output/id_rsa")).name
-          pub  = Path(keys.get("public_key_path",  "/output/id_rsa.pub")).name
-          (home / ".ssh" / "id_rsa").write_bytes(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/{priv}").read_bytes())
-          (home / ".ssh" / "id_rsa").chmod(0o600)
-          (home / ".ssh" / "id_rsa.pub").write_bytes(Path(f"{os.environ['VM_IMAGES_DIR']}/.oras-meta/vm-info/{pub}").read_bytes())
-          username = info.get("username", "ubuntu")
-          Path(os.environ["GITHUB_ENV"]).open("a").write(f"VM_USERNAME={username}\n")
-          print(f"SSH key extracted for user '{username}'")
-          PY
-
-          [ "$HOME" = /root ] || { rm -rf /root/.ssh && ln -s "$HOME/.ssh" /root/.ssh; }
-
-      - name: Compute qcow2 cache key
-        id: qcow2-key
-        run: |
-          digest=$(python3 -c "
-          import json, hashlib, pathlib
-          m = json.loads(pathlib.Path('$VM_IMAGES_DIR/.oras-meta/manifest.json').read_text())
-          raw = json.dumps(m, sort_keys=True, separators=(',',':'))
-          print(hashlib.sha256(raw.encode()).hexdigest()[:16])
-          ")
-          echo "key=qcow2-${digest}" >> "$GITHUB_OUTPUT"
-
-      - name: Cache qcow2 backing image
+      - name: Cache VM backing image
         id: qcow2-cache
         uses: actions/cache@v4
         with:
-          path: ${{ github.workspace }}/qcow2-cache/${{ env.VM_NAME }}-backing.qcow2
-          key: ${{ steps.qcow2-key.outputs.key }}
+          path: ${{ env.VM_IMAGES_DIR }}
+          key: qcow2-${{ env.QCOW2_TAG }}
 
-      - name: Download and decompress qcow2 blob
-        if: steps.qcow2-cache.outputs.cache-hit != 'true'
-        shell: bash
+      - name: Cache ccache (kernel build acceleration)
+        uses: actions/cache@v4
+        with:
+          path: /root/.ccache
+          key: ccache-kernel-7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+          restore-keys: |
+            ccache-kernel-7.2.4-
+
+      - name: Cache kernel debs
+        id: kernel-deb-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/kernel-debs
+          key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+
+      - name: Cache DKMS modules
+        id: dkms-cache
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/dkms-modules
+          key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+
+      - name: Restore cached kernel debs into /tmp
+        if: steps.kernel-deb-cache.outputs.cache-hit == 'true'
+        run: cp /var/cache/kernel-debs/*.deb /tmp/ 2>/dev/null && echo "Kernel debs restored — build will be skipped" || true
+
+      - name: Restore cached DKMS modules
+        if: steps.dkms-cache.outputs.cache-hit == 'true'
         run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/qcow2-cache"
-          tmp=$(mktemp -d)
-          cd "$tmp"
-          oras pull "$QCOW2_IMAGE"
-          zstd -d --long=27 --rm ./*.qcow2.zst
-          mv ./*.qcow2 "$GITHUB_WORKSPACE/qcow2-cache/$VM_NAME-backing.qcow2"
+          mkdir -p /var/lib/dkms
+          cp -a /var/cache/dkms-modules/. /var/lib/dkms/ 2>/dev/null && echo "DKMS modules restored" || true
 
-      - name: Create qcow2 overlay
+      - name: Resolve Docker bridge IP for VM SSH
         run: |
-          mkdir -p "$VM_IMAGES_DIR"
-          cp "$GITHUB_WORKSPACE/qcow2-cache/$VM_NAME-backing.qcow2" \
-             "$VM_IMAGES_DIR/$VM_NAME-backing.qcow2"
-          rm -f "$VM_IMAGES_DIR/$VM_NAME.qcow2"
-          qemu-img create -F qcow2 \
-            -b "$VM_IMAGES_DIR/$VM_NAME-backing.qcow2" \
-            -f qcow2 "$VM_IMAGES_DIR/$VM_NAME.qcow2"
+          # In a container job, localhost doesn't reach QEMU — use the bridge IP.
+          # Try ip route first; fall back to parsing /proc/net/route.
+          IP=$(ip route 2>/dev/null | awk '/default/ {print $3; exit}') || true
+          if [ -z "${IP}" ]; then
+            IP=$(awk 'NR>1 && $2=="00000000" {
+              hex=$3
+              printf "%d.%d.%d.%d\n",
+                strtonum("0x"substr(hex,7,2)),
+                strtonum("0x"substr(hex,5,2)),
+                strtonum("0x"substr(hex,3,2)),
+                strtonum("0x"substr(hex,1,2))
+            }' /proc/net/route | head -1) || true
+          fi
+          echo "VM_SSH_HOST=${IP}" >> "$GITHUB_ENV"
+          echo "VM SSH host: ${IP}"
 
-      - name: Start VM with one emulated NVMe device
+      - name: Run run-this.py
+        env:
+          KERNEL_SRC: /tmp/linux-dmabuf
+          KERNEL_BRANCH: v7.2.4
+          CCACHE_DIR: /root/.ccache
+          VM_SSH_PORT: "2222"
         run: |
-          qemu-tool run-vm \
-            --vm-name  "$VM_NAME" \
-            --images   "$VM_IMAGES_DIR" \
-            --ssh-port "$VM_SSH_PORT" \
-            --nvme     1 \
-            > /tmp/run-vm.log 2>&1 &
-          echo "QEMU started in background"
+          python3 run-this.py
 
-      - name: Wait for VM SSH (180s)
+      - name: Populate kernel deb cache path
+        if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
         run: |
-          elapsed=0
-          while [ $elapsed -lt 180 ]; do
-            if ssh -i "$HOME/.ssh/id_rsa" \
-                   -o ConnectTimeout=2 -o BatchMode=yes \
-                   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                   -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" true 2>/dev/null; then
-              echo "VM ready after ${elapsed}s"; exit 0
-            fi
-            sleep 3; elapsed=$((elapsed + 3))
-          done
-          echo "::error::VM did not respond on SSH within 180s"
-          cat /tmp/run-vm.log; exit 1
+          mkdir -p /var/cache/kernel-debs
+          find /tmp -maxdepth 1 \( -name 'linux-image-*-dmabuf-72x*.deb' -o -name 'linux-headers-*-dmabuf-72x*.deb' \) \
+            ! -name '*-dbg_*' | xargs -r cp -t /var/cache/kernel-debs/ || true
 
-      - name: Verify NVMe device present in stock kernel
+      - name: Save kernel debs to cache
+        if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/kernel-debs
+          key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
+
+      - name: Populate DKMS modules cache path
+        if: always() && steps.dkms-cache.outputs.cache-hit != 'true'
         run: |
-          ssh -i "$HOME/.ssh/id_rsa" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
-              "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
-          echo "NVMe device confirmed"
+          mkdir -p /var/cache/dkms-modules
+          cp -a /var/lib/dkms/. /var/cache/dkms-modules/ 2>/dev/null || true
 
-      - name: Copy kernel tarball into VM and install
-        run: |
-          TARBALL=$(ls /tmp/kernel-tarball/linux-*.tar.gz)
-          scp -i "$HOME/.ssh/id_rsa" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -P "$VM_SSH_PORT" \
-              "$TARBALL" "$VM_USERNAME@localhost:/tmp/kernel.tar.gz"
-          ssh -i "$HOME/.ssh/id_rsa" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
-              "sudo tar -C / --exclude=vmlinux-* -xhf /tmp/kernel.tar.gz && \
-               sudo update-initramfs -c -k \$(ls /lib/modules/ | tail -1) && \
-               sudo update-grub && \
-               sudo reboot now" || true
-
-      - name: Wait for VM to reboot (240s)
-        run: |
-          sleep 15
-          elapsed=0
-          while [ $elapsed -lt 240 ]; do
-            if ssh -i "$HOME/.ssh/id_rsa" \
-                   -o ConnectTimeout=2 -o BatchMode=yes \
-                   -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                   -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" true 2>/dev/null; then
-              echo "VM back after ${elapsed}s"; exit 0
-            fi
-            sleep 5; elapsed=$((elapsed + 5))
-          done
-          echo "::error::VM did not come back after reboot within 240s"; exit 1
-
-      - name: Verify DMA-BUF kernel is running
-        run: |
-          UNAME=$(ssh -i "$HOME/.ssh/id_rsa" \
-                      -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-                      -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
-                      "uname -r")
-          echo "Kernel: $UNAME"
-          echo "$UNAME" | grep -q "${LABEL#-}" \
-            || echo "::warning::label '${LABEL}' not in uname '$UNAME' — may have booted old kernel"
-
-      - name: Verify DMA-BUF config knobs present
-        run: |
-          ssh -i "$HOME/.ssh/id_rsa" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
-              "zgrep -E 'CONFIG_(XFS_FS|BLK_DEV_NVME|NVME_CORE|9P_FS)' /boot/config-\$(uname -r)"
-
-      - name: Verify NVMe device present after kernel change
-        run: |
-          ssh -i "$HOME/.ssh/id_rsa" \
-              -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-              -p "$VM_SSH_PORT" "$VM_USERNAME@localhost" \
-              "lsblk -d -o NAME,MODEL,SIZE | grep nvme"
-          echo "NVMe device confirmed after kernel install"
-
-      - name: Print run-vm log on failure
-        if: failure()
-        run: cat /tmp/run-vm.log || true
+      - name: Save DKMS modules to cache
+        if: always() && steps.dkms-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /var/cache/dkms-modules
+          key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}

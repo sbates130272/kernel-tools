@@ -1,0 +1,415 @@
+From ba6796df97a02c3a35aedd9f78de0b9239d82ce6 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:24:02 -0600
+Subject: [PATCH 01/20] dma-buf: introduce initial file I/O infrastructure
+
+---
+ drivers/dma-buf/Makefile     |   2 +-
+ drivers/dma-buf/dma-buf-io.c | 229 +++++++++++++++++++++++++++++++++++
+ include/linux/dma-buf-io.h   | 125 +++++++++++++++++++
+ include/linux/fs.h           |   2 +
+ 4 files changed, 357 insertions(+), 1 deletion(-)
+ create mode 100644 drivers/dma-buf/dma-buf-io.c
+ create mode 100644 include/linux/dma-buf-io.h
+
+diff --git a/drivers/dma-buf/Makefile b/drivers/dma-buf/Makefile
+index b25d7550b..523731b0f 100644
+--- a/drivers/dma-buf/Makefile
++++ b/drivers/dma-buf/Makefile
+@@ -1,6 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only
+ obj-y := dma-buf.o dma-fence.o dma-fence-array.o dma-fence-chain.o \
+-	 dma-fence-unwrap.o dma-resv.o dma-buf-mapping.o
++	 dma-fence-unwrap.o dma-resv.o dma-buf-mapping.o dma-buf-io.o
+ obj-$(CONFIG_DMABUF_HEAPS)	+= dma-heap.o
+ obj-$(CONFIG_DMABUF_HEAPS)	+= heaps/
+ obj-$(CONFIG_SYNC_FILE)		+= sync_file.o
+diff --git a/drivers/dma-buf/dma-buf-io.c b/drivers/dma-buf/dma-buf-io.c
+new file mode 100644
+index 000000000..21296bd3d
+--- /dev/null
++++ b/drivers/dma-buf/dma-buf-io.c
+@@ -0,0 +1,229 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * Common infrastructure for supporing dma-buf in the I/O path.
++ *
++ * Copyright (C) 2026 Pavel Begunkov <asml.silence@gmail.com>
++ */
++#include <linux/dma-buf-io.h>
++#include <linux/dma-resv.h>
++
++static void dma_buf_io_map_release(struct dma_buf_io_map *map)
++{
++	struct dma_buf_io_ctx *ctx = map->ctx;
++
++	dma_resv_assert_held(ctx->dmabuf->resv);
++
++	percpu_ref_exit(&map->refs);
++	ctx->dev_ops->unmap(ctx, map);
++}
++
++static void dma_buf_io_map_refs_cb(struct percpu_ref *ref)
++{
++	struct dma_buf_io_map *map = container_of(ref, struct dma_buf_io_map, refs);
++
++	complete(&map->drained);
++}
++
++static void dma_buf_io_kill_map(struct dma_buf_io_ctx *ctx)
++{
++	struct dma_buf_io_map *map;
++
++	dma_resv_assert_held(ctx->dmabuf->resv);
++
++	map = rcu_dereference_protected(ctx->map,
++				dma_resv_held(ctx->dmabuf->resv));
++	if (!map)
++		return;
++
++	rcu_assign_pointer(ctx->map, NULL);
++	percpu_ref_kill(&map->refs);
++	/* make sure the map is not visible via ctx->map */
++	synchronize_rcu_expedited();
++	wait_for_completion(&map->drained);
++	dma_buf_io_map_release(map);
++}
++
++int dma_buf_io_init_map(struct dma_buf_io_ctx *ctx, struct dma_buf_io_map *map,
++			struct sg_table *sgt)
++{
++	unsigned seg_shift = ~0U;
++	struct scatterlist *sg;
++	unsigned long tmp;
++	int ret;
++
++	for_each_sgtable_dma_sg(sgt, sg, tmp)
++		seg_shift = min(seg_shift, __ffs(sg_dma_len(sg)));
++
++	ret = percpu_ref_init(&map->refs, dma_buf_io_map_refs_cb, 0, GFP_KERNEL);
++	if (ret)
++		return ret;
++	init_completion(&map->drained);
++	map->min_seg_shift = seg_shift;
++	map->ctx = ctx;
++	return 0;
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_io_init_map, "DMA_BUF");
++
++static struct dma_buf_io_map *__dma_buf_io_create_map(struct dma_buf_io_ctx *ctx)
++{
++	struct dma_buf *dmabuf = ctx->dmabuf;
++	struct dma_buf_io_map *map;
++	long ret;
++
++	dma_resv_assert_held(dmabuf->resv);
++
++	if (ctx->is_dead)
++		return ERR_PTR(-ENOENT);
++
++	map = __dma_buf_io_get_map(ctx);
++	if (map)
++		return map;
++
++	map = ctx->dev_ops->map(ctx);
++	if (IS_ERR(map))
++		return map;
++
++	if (WARN_ON_ONCE(!map->min_seg_shift))
++		return ERR_PTR(-EFAULT);
++
++	ret = dma_resv_wait_timeout(dmabuf->resv, DMA_RESV_USAGE_KERNEL,
++				    true, MAX_SCHEDULE_TIMEOUT);
++	if (ret <= 0) {
++		if (!ret)
++			ret = -EAGAIN;
++		dma_buf_io_map_release(map);
++		return ERR_PTR(ret);
++	}
++
++	/* get a reference for the caller */
++	percpu_ref_get(&map->refs);
++	rcu_assign_pointer(ctx->map, map);
++	return map;
++}
++
++/**
++ * dma_buf_io_create_map - Create a new or reference an existing map.
++ * @ctx:	[in]	dma-buf I/O context
++ *
++ * A slow path part of dma_buf_io_get_map() and shouldn't be used directly.
++ * Behaves in the same way but allowed to block.
++ *
++ * Returns a map on success, or ERR_PTR encoded errno otherwise.
++ */
++struct dma_buf_io_map *dma_buf_io_create_map(struct dma_buf_io_ctx *ctx)
++{
++	struct dma_buf_io_map *map;
++	int ret;
++
++	ret = dma_resv_lock_interruptible(ctx->dmabuf->resv, NULL);
++	if (ret)
++		return ERR_PTR(ret);
++
++	map = __dma_buf_io_create_map(ctx);
++	dma_resv_unlock(ctx->dmabuf->resv);
++	return map;
++}
++
++static void dma_buf_io_ctx_shutdown(struct dma_buf_io_ctx *ctx)
++{
++	dma_resv_lock(ctx->dmabuf->resv, NULL);
++	ctx->is_dead = true;
++	dma_buf_io_kill_map(ctx);
++	dma_resv_unlock(ctx->dmabuf->resv);
++}
++
++/*
++ * dma_buf_io_ctx_create - create a new dma-buf I/O context for the given file.
++ * @file: 	[in]	file for which the context is created
++ * @dmabuf:	[in]	buffer to create a context from
++ * @dir:	[in]	direction of DMA transfers
++ * @out_ctx	[out]	resulting ctx
++ *
++ * Create a new I/O context from the given DMA buffer for the given file.
++ * It only works with files implementing ->init_dma_buf_io_ctx and fails
++ * with -EOPNOTSUPP otherwise. Once created, the user can create a map
++ * and use it to issue I/O like read / write requests to @file.
++ */
++int dma_buf_io_ctx_create(struct file *file,
++			   struct dma_buf *dmabuf,
++			   enum dma_data_direction dir,
++			   struct dma_buf_io_ctx **out_ctx)
++{
++	struct dma_buf_io_ctx *ctx;
++	int ret;
++
++	if (!file->f_op->init_dma_buf_io_ctx)
++		return -EOPNOTSUPP;
++
++	ctx = kzalloc_obj(*ctx);
++	if (!ctx)
++		return -ENOMEM;
++	ctx->dir = dir;
++	ctx->dmabuf = dmabuf;
++	get_dma_buf(dmabuf);
++
++	ret = file->f_op->init_dma_buf_io_ctx(file, ctx);
++	if (ret) {
++		kfree(ctx);
++		dma_buf_put(dmabuf);
++		return ret;
++	}
++
++	if (WARN_ON_ONCE(!ctx->dev_ops ||
++			 !ctx->dev_ops->map ||
++			 !ctx->dev_ops->unmap ||
++			 !ctx->dev_ops->release))
++		return -EINVAL;
++
++	*out_ctx = ctx;
++	return 0;
++}
++
++/**
++ * dma_buf_io_ctx_release - destroy the I/O context
++ * @ctx:	[in]	dma-buf I/O context
++ *
++ * Destroy the context. It makes sure all maps are waited on and destroyed,
++ * and can block for I/O to complete. It detaches from the importer and
++ * destroys all its resources via the ->release callback, and frees the
++ * context.
++ */
++void dma_buf_io_ctx_release(struct dma_buf_io_ctx *ctx)
++{
++	dma_buf_io_ctx_shutdown(ctx);
++
++	if (WARN_ON_ONCE(rcu_dereference_protected(ctx->map, true)))
++		return;
++
++	ctx->dev_ops->release(ctx);
++	dma_buf_put(ctx->dmabuf);
++	kfree(ctx);
++}
++
++/**
++ * dma_buf_io_invalidate_mappings - invalidate the current map
++ * @ctx: 	[in]	dma-buf I/O context
++ *
++ * Importer's helper for invalidating the current map. Waits for all I/O
++ * using the map to complete and destroyes the map. Called with the
++ * dma-buf reservation lock held.
++ */
++void dma_buf_io_invalidate_mappings(struct dma_buf_io_ctx *ctx)
++{
++	dma_buf_io_kill_map(ctx);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_io_invalidate_mappings, "DMA_BUF");
++
++/**
++ * dma_buf_io_detach - detach the @ctx from the importer.
++ * @ctx:	[in]	dma-buf I/O context
++ *
++ * Importer's helper for removing the I/O ctx. It kills all maps and
++ * prevents creation of new ones. Upon return it's safe for the importer
++ * to release all its resources such as dma-buf attachments.
++ */
++void dma_buf_io_detach(struct dma_buf_io_ctx *ctx)
++{
++	dma_buf_io_ctx_shutdown(ctx);
++}
++EXPORT_SYMBOL_NS_GPL(dma_buf_io_detach, "DMA_BUF");
+diff --git a/include/linux/dma-buf-io.h b/include/linux/dma-buf-io.h
+new file mode 100644
+index 000000000..b9bbeca17
+--- /dev/null
++++ b/include/linux/dma-buf-io.h
+@@ -0,0 +1,125 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __DMA_BUF_IO_H__
++#define __DMA_BUF_IO_H__
++
++#include <linux/dma-buf.h>
++
++struct dma_buf_io_ctx;
++struct dma_buf_io_map;
++
++struct dma_buf_io_ops {
++	/*
++	 * Create a new map for the given ctx. Called with the reservation
++	 * lock held.
++	 */
++	struct dma_buf_io_map *(*map)(struct dma_buf_io_ctx *ctx);
++
++	/*
++	 * Clean up device specific parts of the @map. Called with the
++	 * reservation lock held.
++	 */
++	void (*unmap)(struct dma_buf_io_ctx *ctx, struct dma_buf_io_map *map);
++
++	/*
++	 * The user tries to destroy the ctx. Release all device specific
++	 * parts of the token.
++	 */
++	void (*release)(struct dma_buf_io_ctx *);
++};
++
++struct dma_buf_io_map {
++	/*
++	 * Counts attached requests and other users. Device specific unmapping
++	 * is deferred until all refs are dropped.
++	 */
++	struct percpu_ref		refs;
++	/*
++	 * Shift for the minimum segment size of the mapping.
++	 */
++	unsigned			min_seg_shift;
++
++	struct dma_buf_io_ctx		*ctx;
++	struct completion		drained;
++};
++
++struct dma_buf_io_ctx {
++	struct dma_buf_io_map __rcu		*map;
++	struct dma_buf				*dmabuf;
++	enum dma_data_direction			dir;
++	bool					is_dead;
++
++	void					*dev_priv;
++	const struct dma_buf_io_ops		*dev_ops;
++};
++
++int dma_buf_io_ctx_create(struct file *file,
++			   struct dma_buf *dmabuf,
++			   enum dma_data_direction dir,
++			   struct dma_buf_io_ctx **ctx);
++void dma_buf_io_ctx_release(struct dma_buf_io_ctx *ctx);
++
++struct dma_buf_io_map *dma_buf_io_create_map(struct dma_buf_io_ctx *ctx);
++
++static inline struct dma_buf_io_map *
++__dma_buf_io_get_map(struct dma_buf_io_ctx *ctx)
++{
++	struct dma_buf_io_map *map;
++
++	guard(rcu)();
++
++	map = rcu_dereference(ctx->map);
++	if (unlikely(!map || !percpu_ref_tryget_live_rcu(&map->refs)))
++		return NULL;
++
++	return map;
++}
++
++/**
++ * dma_buf_io_get_map - Create a new or reference an existing map.
++ * @ctx:	[in]	dma-buf I/O context
++ * @nowait:	[in]	specifies whether it's allowed to block
++ *
++ * Create a new or acquire an existing map. When succeeds, it returns
++ * a referenced map, which should eventually be put down with
++ * dma_buf_io_map_drop(). If @nowait is set and the function would block,
++ * it return -EAGAIN, and the caller is expected to retry from a context
++ * where blocking is allowed.
++ *
++ * Returns a map on success, or ERR_PTR encoded errno otherwise.
++ */
++static inline struct dma_buf_io_map *
++dma_buf_io_get_map(struct dma_buf_io_ctx *ctx, bool nowait)
++{
++	struct dma_buf_io_map *map;
++
++	map = __dma_buf_io_get_map(ctx);
++	if (likely(map))
++		return map;
++
++	if (nowait)
++		return ERR_PTR(-EAGAIN);
++	return dma_buf_io_create_map(ctx);
++}
++
++/**
++ * dma_buf_io_map_drop - Drop the map.
++ * @map:	[in]	dma-buf I/O map
++ *
++ * Put down a reference for the @map acquired via dma_buf_io_get_map().
++ * Should be called as soon as I/O is completed.
++ */
++static inline void dma_buf_io_map_drop(struct dma_buf_io_map *map)
++{
++	percpu_ref_put(&map->refs);
++}
++
++/*
++ * Device API
++ */
++
++void dma_buf_io_invalidate_mappings(struct dma_buf_io_ctx *ctx);
++int dma_buf_io_init_map(struct dma_buf_io_ctx *ctx, struct dma_buf_io_map *map,
++			struct sg_table *sgt);
++void dma_buf_io_detach(struct dma_buf_io_ctx *ctx);
++
++#endif
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index 50ce731a2..e62fa653e 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1914,6 +1914,7 @@ struct dir_context {
+ #define COPY_FILE_SPLICE		(1 << 0)
+ 
+ struct io_uring_cmd;
++struct dma_buf_io_ctx;
+ struct offset_ctx;
+ 
+ typedef unsigned int __bitwise fop_flags_t;
+@@ -1962,6 +1963,7 @@ struct file_operations {
+ 	int (*uring_cmd_iopoll)(struct io_uring_cmd *, struct io_comp_batch *,
+ 				unsigned int poll_flags);
+ 	int (*mmap_prepare)(struct vm_area_desc *);
++	int (*init_dma_buf_io_ctx)(struct file *, struct dma_buf_io_ctx *);
+ } __randomize_layout;
+ 
+ /* Supports async buffered reads */
+-- 
+2.53.0
+

@@ -1,0 +1,25 @@
+--- a/amd/amdgpu/Makefile	2026-10-20 09:25:25.334243657 -0600
++++ b/amd/amdgpu/Makefile	2026-10-20 09:36:40.091416958 -0600
+@@ -310,11 +310,20 @@
+ amdgpu-y += $(AMD_POWERPLAY_FILES)
+ 
+ ifneq ($(CONFIG_DRM_AMD_DC),)
+-
++# amdgpu_dm requires drm_atomic_state which was renamed drm_atomic_commit in
++# 7.2+. Skip the display stack on 7.2+ kernels; compute/KFD still work.
++# Remove this guard once amdgpu_dm is fully ported to the 7.2+ DRM API.
++KERNELVER_72_OR_NEWER := $(shell [ $(VERSION) -gt 7 ] || \
++	([ $(VERSION) -eq 7 ] && [ $(PATCHLEVEL) -ge 2 ]) && echo y)
++ifeq ($(KERNELVER_72_OR_NEWER),y)
++# Override CONFIG_DRM_AMD_DC at the C-preprocessor level so that #ifdef guards
++# in amdgpu_debugfs.c, amdgpu_discovery.c etc. don't compile display references.
++ccflags-y += -include $(src)/../dkms/kcl_no_display_72x.h
++else
+ RELATIVE_AMD_DISPLAY_PATH := ../$(DISPLAY_FOLDER_NAME)
+ include $(FULL_AMD_DISPLAY_PATH)/Makefile
+-
+ amdgpu-y += $(AMD_DISPLAY_FILES)
++endif
+ 
+ endif
+ 

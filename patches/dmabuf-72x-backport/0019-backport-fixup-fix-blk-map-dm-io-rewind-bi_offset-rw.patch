@@ -1,0 +1,60 @@
+From 734a0fbaca97abe73f3ff162833ec21353498be3 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 21:11:57 -0600
+Subject: [PATCH 19/20] backport fixup: fix blk-map, dm-io-rewind bi_offset,
+ rw.c placement
+
+---
+ block/blk-map.c           | 2 +-
+ drivers/md/dm-io-rewind.c | 2 +-
+ io_uring/rw.c             | 3 ++-
+ 3 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/block/blk-map.c b/block/blk-map.c
+index 615d29bb8..9cb9605d1 100644
+--- a/block/blk-map.c
++++ b/block/blk-map.c
+@@ -473,7 +473,7 @@ static int blk_rq_map_user_bvec(struct request *rq, const struct iov_iter *iter)
+ 	bio = blk_rq_map_bio_alloc(rq, 0, GFP_KERNEL);
+ 	if (!bio)
+ 		return -ENOMEM;
+-	bio_iov_bvec_set(bio, iter);
++	bio_iov_iter_set(bio, iter);
+ 
+ 	ret = blk_rq_append_bio(rq, bio);
+ 	if (ret)
+diff --git a/drivers/md/dm-io-rewind.c b/drivers/md/dm-io-rewind.c
+index ef590542a..19f7af04f 100644
+--- a/drivers/md/dm-io-rewind.c
++++ b/drivers/md/dm-io-rewind.c
+@@ -115,7 +115,7 @@ static inline void dm_bio_rewind_iter(const struct bio *bio,
+ 	/* No advance means no rewind */
+ 	if (bio_no_advance_iter(bio)) {
+ 		iter->bi_size += bytes;
+-		iter->bi_offset -= bytes;
++		iter->bi_bvec_done -= bytes;
+ 	} else {
+ 		dm_bvec_iter_rewind(bio->bi_io_vec, iter, bytes);
+ 	}
+diff --git a/io_uring/rw.c b/io_uring/rw.c
+index ab4f45ec9..94b05afb4 100644
+--- a/io_uring/rw.c
++++ b/io_uring/rw.c
+@@ -597,12 +597,13 @@ static void io_complete_rw(struct kiocb *kiocb, long res)
+ 	struct io_rw *rw = container_of(kiocb, struct io_rw, kiocb);
+ 	struct io_kiocb *req = cmd_to_io_kiocb(rw);
+ 
++	io_detach_dmabuf_map(req);
++
+ 	__io_complete_rw_common(req, res);
+ 	io_req_set_res(req, io_fixup_rw_res(req, res), 0);
+ 	req->io_task_work.func = io_req_rw_complete;
+ 	__io_req_task_work_add(req, IOU_F_TWQ_LAZY_WAKE);
+ }
+-	io_detach_dmabuf_map(req);
+ 
+ 
+ static void io_complete_rw_iopoll(struct kiocb *kiocb, long res)
+-- 
+2.53.0
+

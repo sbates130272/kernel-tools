@@ -1,0 +1,124 @@
+--- a/amd/amdgpu/amdgpu_ras.c	2026-10-20 09:04:22.391277971 -0600
++++ b/amd/amdgpu/amdgpu_ras.c	2026-10-20 09:04:41.741610691 -0600
+@@ -21,6 +21,7 @@
+  *
+  *
+  */
++#include <linux/version.h>
+ #include <linux/debugfs.h>
+ #include <linux/list.h>
+ #include <linux/module.h>
+@@ -2304,7 +2305,8 @@
+ 		&con->event_state_attr.attr,
+ 		NULL
+ 	};
+-#ifdef HAVE_ATTRIBUTE_GROUP_BIN_ATTRS_NEW
++#if defined(HAVE_ATTRIBUTE_GROUP_BIN_ATTRS_NEW) || LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++	/* bin_attrs is const struct bin_attribute *const * in 7.2+ */
+ 	const struct bin_attribute *bin_attrs[] = {
+ #else
+ 	struct bin_attribute *bin_attrs[] = {
+--- a/amd/amdgpu/dce_v6_0.c	2026-10-20 09:05:56.059038357 -0600
++++ b/amd/amdgpu/dce_v6_0.c	2026-10-20 09:06:42.901647684 -0600
+@@ -21,6 +21,7 @@
+  *
+  */
+ 
++#include <linux/version.h>
+ #include <linux/pci.h>
+ 
+ #include <drm/drm_edid.h>
+@@ -2637,19 +2638,23 @@
+ 	return dce_v6_0_crtc_do_set_base(crtc, old_fb, x, y, 0);
+ }
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ static int dce_v6_0_crtc_set_base_atomic(struct drm_crtc *crtc,
+ 					 struct drm_framebuffer *fb,
+ 					 int x, int y, enum mode_set_atomic state)
+ {
+ 	return dce_v6_0_crtc_do_set_base(crtc, fb, x, y, 1);
+ }
++#endif
+ 
+ static const struct drm_crtc_helper_funcs dce_v6_0_crtc_helper_funcs = {
+ 	.dpms = dce_v6_0_crtc_dpms,
+ 	.mode_fixup = dce_v6_0_crtc_mode_fixup,
+ 	.mode_set = dce_v6_0_crtc_mode_set,
+ 	.mode_set_base = dce_v6_0_crtc_set_base,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ 	.mode_set_base_atomic = dce_v6_0_crtc_set_base_atomic,
++#endif
+ 	.prepare = dce_v6_0_crtc_prepare,
+ 	.commit = dce_v6_0_crtc_commit,
+ 	.disable = dce_v6_0_crtc_disable,
+--- a/amd/amdgpu/dce_v8_0.c	2026-10-20 09:05:56.055966661 -0600
++++ b/amd/amdgpu/dce_v8_0.c	2026-10-20 09:06:18.209304067 -0600
+@@ -21,6 +21,7 @@
+  *
+  */
+ 
++#include <linux/version.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_modeset_helper.h>
+@@ -2595,19 +2596,23 @@
+ 	return dce_v8_0_crtc_do_set_base(crtc, old_fb, x, y, 0);
+ }
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ static int dce_v8_0_crtc_set_base_atomic(struct drm_crtc *crtc,
+ 					 struct drm_framebuffer *fb,
+ 					 int x, int y, enum mode_set_atomic state)
+ {
+ 	return dce_v8_0_crtc_do_set_base(crtc, fb, x, y, 1);
+ }
++#endif
+ 
+ static const struct drm_crtc_helper_funcs dce_v8_0_crtc_helper_funcs = {
+ 	.dpms = dce_v8_0_crtc_dpms,
+ 	.mode_fixup = dce_v8_0_crtc_mode_fixup,
+ 	.mode_set = dce_v8_0_crtc_mode_set,
+ 	.mode_set_base = dce_v8_0_crtc_set_base,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ 	.mode_set_base_atomic = dce_v8_0_crtc_set_base_atomic,
++#endif
+ 	.prepare = dce_v8_0_crtc_prepare,
+ 	.commit = dce_v8_0_crtc_commit,
+ 	.disable = dce_v8_0_crtc_disable,
+--- a/amd/amdgpu/dce_v10_0.c	2026-10-20 09:05:56.061366255 -0600
++++ b/amd/amdgpu/dce_v10_0.c	2026-10-20 09:07:08.961678343 -0600
+@@ -21,6 +21,7 @@
+  *
+  */
+ 
++#include <linux/version.h>
+ #include <drm/drm_edid.h>
+ #include <drm/drm_fourcc.h>
+ #include <drm/drm_modeset_helper.h>
+@@ -2670,19 +2671,23 @@
+ 	return dce_v10_0_crtc_do_set_base(crtc, old_fb, x, y, 0);
+ }
+ 
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ static int dce_v10_0_crtc_set_base_atomic(struct drm_crtc *crtc,
+-					 struct drm_framebuffer *fb,
+-					 int x, int y, enum mode_set_atomic state)
++					  struct drm_framebuffer *fb,
++					  int x, int y, enum mode_set_atomic state)
+ {
+ 	return dce_v10_0_crtc_do_set_base(crtc, fb, x, y, 1);
+ }
++#endif
+ 
+ static const struct drm_crtc_helper_funcs dce_v10_0_crtc_helper_funcs = {
+ 	.dpms = dce_v10_0_crtc_dpms,
+ 	.mode_fixup = dce_v10_0_crtc_mode_fixup,
+ 	.mode_set = dce_v10_0_crtc_mode_set,
+ 	.mode_set_base = dce_v10_0_crtc_set_base,
++#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 2, 0)
+ 	.mode_set_base_atomic = dce_v10_0_crtc_set_base_atomic,
++#endif
+ 	.prepare = dce_v10_0_crtc_prepare,
+ 	.commit = dce_v10_0_crtc_commit,
+ 	.disable = dce_v10_0_crtc_disable,

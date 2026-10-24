@@ -12,3 +12,4 @@ output-arm64-*
 *.gz
 *.dsc
 amdgpu-build/
+userspace/amdgpu-dmabuf-io/test_p2p_io

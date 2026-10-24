@@ -1,0 +1,26 @@
+From 5e429f861097fac080e8e01351a32f3de6bb8355 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 21:16:28 -0600
+Subject: [PATCH 20/20] backport fixup: fix IO_BUF_DEST/SOURCE constants for
+ 7.2.4 compat
+
+---
+ io_uring/dma-buf.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/io_uring/dma-buf.c b/io_uring/dma-buf.c
+index 1a1a88640..604680342 100644
+--- a/io_uring/dma-buf.c
++++ b/io_uring/dma-buf.c
+@@ -52,7 +52,7 @@ int __io_register_dmabuf(struct io_ring_ctx *ctx,
+ 	imu->release = io_release_dmabuf;
+ 	imu->priv = bd;
+ 	imu->flags = IO_REGBUF_F_DMABUF | IO_REGBUF_F_UNCLONEABLE;
+-	imu->dir = IO_BUF_DEST | IO_BUF_SOURCE;
++	imu->dir = IO_IMU_DEST | IO_IMU_SOURCE;
+ 	dma_buf_put(dmabuf);
+ 	return 0;
+ err:
+-- 
+2.53.0
+

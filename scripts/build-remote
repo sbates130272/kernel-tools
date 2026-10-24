@@ -117,6 +117,19 @@ function setup {
         source "${SCRIPT_DIR}/../config-scripts/config-${CONFIG_SCRIPT}"
     fi
 
+    # Auto-detect DKMS packages on the remote that require extra kernel config.
+    # localmodconfig drops flags for modules that are blacklisted at boot (e.g.
+    # amdgpu on rocjitsu VMs), so we apply the relevant config-script fragments
+    # here even when CONFIG_SCRIPT was not explicitly set.
+    if [ "${REMOTE_NAME}" != "localhost" ] && [ "${WSL_MODE}" != "true" ]; then
+        if ssh -F "${HOME}/.ssh/config" "${REMOTE_NAME}" \
+               "dpkg -l amdgpu-dkms 2>/dev/null | grep -q '^ii'" 2>/dev/null; then
+            echo "INFO: amdgpu-dkms detected on ${REMOTE_NAME}, applying config-amdgpu-dkms."
+            # shellcheck source=/dev/null
+            source "${SCRIPT_DIR}/../config-scripts/config-amdgpu-dkms"
+        fi
+    fi
+
     make olddefconfig
 }
 

@@ -1,0 +1,29 @@
+--- a/amd/dkms/Kbuild	2026-10-20 09:30:37.324534775 -0600
++++ b/amd/dkms/Kbuild	2026-10-20 09:38:47.307975000 -0600
+@@ -47,6 +47,7 @@
+ 	-include $(src)/include/kcl/kcl_version.h \
+ 	-include $(src)/include/rename_symbol.h \
+ 	-include $(src)/amd/dkms/config/config.h \
++	$(if $(KERNELVER_72_OR_NEWER),-include $(src)/amd/dkms/kcl_no_display_72x.h,) \
+ 	$(LINUX_SRCTREE_INCLUDE) \
+ 	-I$(src)/include/uapi \
+ 	$(USER_INCLUDE)
+@@ -57,6 +58,18 @@
+ 
+ subdir-ccflags-y += -Wno-error
+ 
++KERNELVER_72_OR_NEWER ?= $(shell [ $(VERSION) -gt 7 ] || \
++	([ $(VERSION) -eq 7 ] && [ $(PATCHLEVEL) -ge 2 ]) && echo y)
++# amdgpu_dm is not yet ported to 7.2+ DRM APIs (drm_atomic_state rename).
++# Disable the display stack on 7.2+ to allow the compute/KFD path to build.
++KERNELVER_72_OR_NEWER := $(shell [ $(VERSION) -gt 7 ] || \
++	([ $(VERSION) -eq 7 ] && [ $(PATCHLEVEL) -ge 2 ]) && echo y)
++ifeq ($(KERNELVER_72_OR_NEWER),y)
++subdir-ccflags-y += -UCONFIG_DRM_AMD_DC -UCONFIG_DRM_AMD_DC_FP
++override CONFIG_DRM_AMD_DC :=
++override CONFIG_DRM_AMD_DC_FP :=
++endif
++
+ # Trying to enable DCN2/3 with core2 optimizations will result in
+ # older versions of GCC hanging during building/installing. Check
+ # if the compiler is using core2 optimizations and only build DCN2/3

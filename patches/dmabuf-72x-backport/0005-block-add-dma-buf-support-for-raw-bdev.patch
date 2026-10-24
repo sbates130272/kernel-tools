@@ -1,0 +1,82 @@
+From ef0b5f5ff8e5df649a7c52064194dfa792020c03 Mon Sep 17 00:00:00 2001
+From: Stephen Bates <sbates@raithlin.com>
+Date: Mon, 19 Oct 2026 20:27:19 -0600
+Subject: [PATCH 05/20] block: add dma-buf support for raw bdev
+
+---
+ block/fops.c           | 24 ++++++++++++++++++++++++
+ include/linux/blkdev.h |  2 ++
+ 2 files changed, 26 insertions(+)
+
+diff --git a/block/fops.c b/block/fops.c
+index f76396287..b68fc3d4c 100644
+--- a/block/fops.c
++++ b/block/fops.c
+@@ -705,6 +705,9 @@ blkdev_direct_write(struct kiocb *iocb, struct iov_iter *from)
+ 
+ static ssize_t blkdev_buffered_write(struct kiocb *iocb, struct iov_iter *from)
+ {
++	if (unlikely(iov_iter_is_dmabuf_map(from)))
++		return -EOPNOTSUPP;
++
+ 	return iomap_file_buffered_write(iocb, from, &blkdev_iomap_ops, NULL,
+ 			NULL);
+ }
+@@ -819,6 +822,11 @@ static ssize_t blkdev_read_iter(struct kiocb *iocb, struct iov_iter *to)
+ 		if (ret < 0 || !count)
+ 			goto reexpand;
+ 	}
++	if (unlikely(iov_iter_is_dmabuf_map(to))) {
++		if (!ret)
++			ret = -EOPNOTSUPP;
++		goto reexpand;
++	}
+ 
+ 	/*
+ 	 * Take i_rwsem and invalidate_lock to avoid racing with set_blocksize
+@@ -922,6 +930,21 @@ static int blkdev_mmap_prepare(struct vm_area_desc *desc)
+ 	return generic_file_mmap_prepare(desc);
+ }
+ 
++static int blkdev_init_dma_buf_io_ctx(struct file *file,
++				      struct dma_buf_io_ctx *ctx)
++{
++	struct block_device *bdev = file_bdev(file);
++	struct gendisk *disk = bdev->bd_disk;
++
++	if (!(file->f_flags & O_DIRECT))
++		return -EINVAL;
++	if (!disk->fops->init_dma_buf_io_ctx)
++		return -EOPNOTSUPP;
++	if (bdev_has_integrity_csum(bdev))
++		return -EOPNOTSUPP;
++	return disk->fops->init_dma_buf_io_ctx(bdev, ctx);
++}
++
+ const struct file_operations def_blk_fops = {
+ 	.open		= blkdev_open,
+ 	.release	= blkdev_release,
+@@ -940,6 +963,7 @@ const struct file_operations def_blk_fops = {
+ 	.fallocate	= blkdev_fallocate,
+ 	.uring_cmd	= blkdev_uring_cmd,
+ 	.fop_flags	= FOP_BUFFER_RASYNC,
++	.init_dma_buf_io_ctx = blkdev_init_dma_buf_io_ctx,
+ };
+ 
+ static __init int blkdev_init(void)
+diff --git a/include/linux/blkdev.h b/include/linux/blkdev.h
+index 9213a5716..9f4c92e51 100644
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -1682,6 +1682,8 @@ struct block_device_operations {
+ 	/* returns the length of the identifier or a negative errno: */
+ 	int (*get_unique_id)(struct gendisk *disk, u8 id[16],
+ 			enum blk_unique_id id_type);
++	int (*init_dma_buf_io_ctx)(struct block_device *,
++				   struct dma_buf_io_ctx *);
+ 	struct module *owner;
+ 	const struct pr_ops *pr_ops;
+ 
+-- 
+2.53.0
+
