@@ -511,7 +511,16 @@ def stage_build_dkms(kver: str, vm_user: str, scp: list[str],
              f"--input={compat_patch}"],
             check=False, stdin=subprocess.DEVNULL)
 
-        dkms_conf = AMDGPU_SRC_HOST / "amd/dkms/dkms.conf"
+        # dkms.conf: the package-installed version is at the root; the build
+        # tree version is nested at amd/dkms/dkms.conf.  Check root first,
+        # then fall back to nested.  If only nested, symlink to root so that
+        # dkms add (which always looks at the root) can find it.
+        dkms_conf_root = AMDGPU_SRC_HOST / "dkms.conf"
+        dkms_conf_nested = AMDGPU_SRC_HOST / "amd/dkms/dkms.conf"
+        if not dkms_conf_root.exists() and dkms_conf_nested.exists():
+            dkms_conf_root.symlink_to("amd/dkms/dkms.conf")
+        dkms_conf = dkms_conf_root if dkms_conf_root.exists() else dkms_conf_nested
+
         amdgpu_short = AMDGPU_VER.split("-")[0]
         pkg_ver = f"{amdgpu_short}-src"  # fallback
         if dkms_conf.exists():
