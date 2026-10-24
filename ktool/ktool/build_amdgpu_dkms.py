@@ -139,7 +139,7 @@ def run_cmd(args: argparse.Namespace) -> int:
 
     run(["dkms", "add", dkms_name], sudo=True, check=False)
     run(["dkms", "build", dkms_name, "-k", kernel_ver,
-         f"--jobs={jobs}"], sudo=True)
+         "-j", str(jobs)], sudo=True)
 
     if args.install:
         run(["dkms", "install", dkms_name, "-k", kernel_ver,
