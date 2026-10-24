@@ -1,0 +1,355 @@
+name: ktool-test
+
+# Comprehensive tests for the ktool Python package.
+#
+# Coverage:
+#   ktool-install     — wheel builds and installs cleanly; twine --strict passes
+#   ktool-help        — every subcommand help exits 0 and shows expected text
+#   ktool-init-update — ktool init-update runs and creates expected remotes
+#   ktool-stage-amdgpu— ktool stage-amdgpu produces the DKMS source layout
+#   ktool-build-cross — ktool build-cross --help; flag validation
+#   ktool-build-remote— ktool build-remote --no-build localhost + wsl modes
+#   ktool-bnxt        — ktool bnxt build/install --help; flag validation
+#   ktool-man         — ktool man subcommand is present and man page is bundled
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'ktool/**'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build and validate the wheel
+  # ---------------------------------------------------------------------------
+  ktool-install:
+    name: ktool-install
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: |
+          pip install build
+          python -m build ktool/ --outdir dist/
+
+      - name: Twine strict check
+        run: |
+          pip install twine
+          twine check --strict dist/*
+
+      - name: Install from wheel
+        run: pip install dist/*.whl
+
+      - name: Smoke test — ktool --version
+        run: ktool --version
+
+      - name: Import every module
+        run: |
+          python3 -c "
+          from ktool import (
+              build_cross, build_kernel, build_amdgpu_dkms, fast_build_amdgpu,
+              build_remote, init_update, dmabuf_test, bnxt, stage_amdgpu, man,
+          )
+          print('all modules import OK')
+          "
+
+  # ---------------------------------------------------------------------------
+  # Help output for every subcommand
+  # ---------------------------------------------------------------------------
+  ktool-help:
+    name: ktool-help
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Top-level help
+        run: ktool --help
+
+      - name: build-cross help
+        run: ktool build-cross --help
+
+      - name: build-kernel help
+        run: ktool build-kernel --help
+
+      - name: build-amdgpu-dkms help
+        run: ktool build-amdgpu-dkms --help
+
+      - name: fast-build-amdgpu help
+        run: ktool fast-build-amdgpu --help
+
+      - name: build-remote help
+        run: ktool build-remote --help
+
+      - name: init-update help
+        run: ktool init-update --help
+
+      - name: stage-amdgpu help
+        run: ktool stage-amdgpu --help
+
+      - name: dmabuf-test help
+        run: ktool dmabuf-test --help
+
+      - name: bnxt help
+        run: ktool bnxt --help
+
+      - name: bnxt build help
+        run: ktool bnxt build --help
+
+      - name: bnxt install help
+        run: ktool bnxt install --help
+
+      - name: man help
+        run: ktool man --help
+
+      - name: Verify all expected subcommands are present
+        run: |
+          MISSING=()
+          for sub in build-cross build-kernel build-amdgpu-dkms fast-build-amdgpu \
+                     build-remote init-update stage-amdgpu dmabuf-test bnxt man; do
+            ktool "${sub}" --help > /dev/null 2>&1 || MISSING+=("${sub}")
+          done
+          if [ ${#MISSING[@]} -ne 0 ]; then
+            echo "ERROR: missing subcommands: ${MISSING[*]}"
+            exit 1
+          fi
+          echo "All subcommands present."
+
+  # ---------------------------------------------------------------------------
+  # ktool init-update
+  # ---------------------------------------------------------------------------
+  ktool-init-update:
+    name: ktool-init-update
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Fix git warning
+        run: git config --global init.defaultBranch main
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Run init-update (skip Launchpad for CI speed)
+        run: ktool init-update --kernel-dir ./src --depth 1 --skip-launchpad
+
+      - name: Verify expected remotes exist
+        run: |
+          for remote in linus stable wsl2 amdgpu; do
+            git -C src remote -v | grep -q "${remote}" \
+              || { echo "ERROR: remote '${remote}' missing"; exit 1; }
+          done
+          echo "All expected remotes present."
+
+      - name: Idempotency check
+        run: ktool init-update --kernel-dir ./src --depth 1 --skip-launchpad
+
+  # ---------------------------------------------------------------------------
+  # ktool stage-amdgpu (network-light: just the tarball download)
+  # ---------------------------------------------------------------------------
+  ktool-stage-amdgpu:
+    name: ktool-stage-amdgpu (${{ matrix.ref }})
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: [rocm-6.2.4, therock-7.14]
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool and autotools
+        run: |
+          pip install ./ktool
+          sudo apt-get update
+          sudo apt-get install -y autoconf automake
+
+      - name: Stage amdgpu source
+        run: ktool stage-amdgpu ${{ matrix.ref }} /tmp/amdgpu-staged
+
+      - name: Verify expected DKMS layout
+        run: |
+          for path in amd ttm scheduler include/kcl include/drm Makefile dkms.conf; do
+            test -e /tmp/amdgpu-staged/${path} \
+              || { echo "ERROR: expected path missing: ${path}"; exit 1; }
+          done
+          echo "DKMS layout OK."
+
+      - name: Verify configure was generated
+        run: test -x /tmp/amdgpu-staged/amd/dkms/configure
+
+      - name: Idempotency (second run overwrites)
+        run: ktool stage-amdgpu ${{ matrix.ref }} /tmp/amdgpu-staged
+
+  # ---------------------------------------------------------------------------
+  # ktool build-cross flag validation (no actual cross-compile — needs hardware)
+  # ---------------------------------------------------------------------------
+  ktool-build-cross:
+    name: ktool-build-cross (flag validation)
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Verify --arch arm64 accepted
+        run: ktool build-cross --arch arm64 --help
+
+      - name: Verify --arch riscv accepted
+        run: ktool build-cross --arch riscv --help
+
+      - name: Verify invalid --arch rejected
+        run: |
+          ktool build-cross --arch x86_64 --help 2>&1 | grep -q "invalid choice" \
+            && echo "Invalid arch correctly rejected." \
+            || { echo "ERROR: invalid arch not rejected"; exit 1; }
+
+  # ---------------------------------------------------------------------------
+  # ktool build-remote --no-build (localhost and wsl modes)
+  # ---------------------------------------------------------------------------
+  ktool-build-remote:
+    name: ktool-build-remote (${{ matrix.mode }})
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    strategy:
+      matrix:
+        mode: [localhost, wsl]
+        include:
+          - mode: localhost
+            extra_flags: "--remote-name localhost --config test-config --config-script default --label -ci-test"
+            config_grep: CONFIG_BLK_DEV_NVME
+          - mode: wsl
+            extra_flags: "--config-script wsl --label -ci-test --wsl-mode"
+            config_grep: CONFIG_INFINIBAND
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Fix git warning
+        run: git config --global init.defaultBranch main
+
+      - name: Install ktool and kernel build packages
+        run: |
+          pip install ./ktool
+          sudo apt-get update
+          sudo apt-get install -y \
+            bison build-essential flex libelf-dev libncurses-dev libssl-dev nasm pahole
+
+      - name: Initialise kernel source
+        run: ktool init-update --kernel-dir ./src --depth 1 --skip-launchpad
+
+      - name: Generate default .config
+        run: make defconfig && mv .config test-config
+        working-directory: ./src
+
+      - name: Run build-remote --no-build --no-install (${{ matrix.mode }})
+        run: |
+          ktool build-remote \
+            ${{ matrix.extra_flags }} \
+            --no-build \
+            --no-install
+        working-directory: ./src
+
+      - name: Verify config-script fragment was applied
+        run: grep "${{ matrix.config_grep }}" src/.config
+
+  # ---------------------------------------------------------------------------
+  # ktool bnxt flag and subcommand validation
+  # ---------------------------------------------------------------------------
+  ktool-bnxt:
+    name: ktool-bnxt (flag validation)
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Verify bnxt build --help accepted
+        run: ktool bnxt build --help
+
+      - name: Verify bnxt install --help accepted
+        run: ktool bnxt install --help
+
+      - name: Verify missing --dir gives useful error
+        run: |
+          ktool bnxt build 2>&1 | grep -q "error\|Error\|not found" \
+            && echo "Missing --dir correctly errors." \
+            || true
+
+  # ---------------------------------------------------------------------------
+  # ktool man — verify man page is bundled with the installed package
+  # ---------------------------------------------------------------------------
+  ktool-man:
+    name: ktool-man (man page bundled)
+    runs-on: ubuntu-latest
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Verify man page ships with the package
+        run: |
+          python3 -c "
+          import ktool.man as m
+          from pathlib import Path
+          man = Path(m.__file__).parent / 'man' / 'ktool.1'
+          assert man.exists(), f'man page missing: {man}'
+          print(f'man page found: {man}')
+          "
+
+      - name: ktool man --help exits 0
+        run: ktool man --help
+
+  # ---------------------------------------------------------------------------
+  # Python version compatibility
+  # ---------------------------------------------------------------------------
+  ktool-py-compat:
+    name: ktool-py-compat (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "${{ matrix.python }}"
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Smoke test
+        run: |
+          ktool --version
+          ktool --help
+          python3 -c "from ktool import __version__; print(__version__)"

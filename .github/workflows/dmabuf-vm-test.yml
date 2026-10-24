@@ -1,8 +1,9 @@
 name: dmabuf-vm-test
 
-# Runs run-this.py inside the QEMU CI container. That script does everything:
-# pull qcow2, boot VM with rocjitsu GPU (large-BAR) + NVMe, build kernel,
-# build amdgpu-dkms, install into VM, probe GPU, run raw-NVMe + XFS P2P tests.
+# Runs ktool dmabuf-test inside the QEMU CI container. That subcommand does
+# everything: pull qcow2, boot VM with rocjitsu GPU (large-BAR) + NVMe, build
+# kernel, build amdgpu-dkms, install into VM, probe GPU, run raw-NVMe + XFS
+# P2P tests.
 
 on:
   workflow_dispatch:
@@ -10,12 +11,11 @@ on:
     branches-ignore:
       - main
     paths:
+      - 'ktool/**'
       - 'patches/dmabuf-72x-backport/**'
       - 'patches/amdgpu-72x-compat/**'
       - 'userspace/amdgpu-dmabuf-io/**'
       - 'config-scripts/config-amdgpu-dkms'
-      - 'scripts/build-amdgpu-dkms'
-      - 'run-this.py'
       - '.github/workflows/dmabuf-vm-test.yml'
 
 env:
@@ -66,10 +66,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: /var/cache/pip-ci
-          key: pip-qemu-tool-v2
+          key: pip-ktool-v1
 
-      - name: Install qemu-tool
-        run: PIP_CACHE_DIR=/var/cache/pip-ci pip install --break-system-packages qemu-tool
+      - name: Install ktool (includes qemu-tool dependency)
+        run: PIP_CACHE_DIR=/var/cache/pip-ci pip install --break-system-packages ./ktool
 
       - name: Cache VM backing image
         id: qcow2-cache
@@ -113,7 +113,6 @@ jobs:
       - name: Resolve Docker bridge IP for VM SSH
         run: |
           # In a container job, localhost doesn't reach QEMU — use the bridge IP.
-          # Try ip route first; fall back to parsing /proc/net/route.
           IP=$(ip route 2>/dev/null | awk '/default/ {print $3; exit}') || true
           if [ -z "${IP}" ]; then
             IP=$(awk 'NR>1 && $2=="00000000" {
@@ -128,14 +127,14 @@ jobs:
           echo "VM_SSH_HOST=${IP}" >> "$GITHUB_ENV"
           echo "VM SSH host: ${IP}"
 
-      - name: Run run-this.py
+      - name: Run ktool dmabuf-test
         env:
           KERNEL_SRC: /tmp/linux-dmabuf
           KERNEL_BRANCH: v7.2.4
           CCACHE_DIR: /root/.ccache
           VM_SSH_PORT: "2222"
         run: |
-          python3 run-this.py
+          ktool dmabuf-test --ssh-host "$VM_SSH_HOST" --ssh-port 2222
 
       - name: Populate kernel deb cache path
         if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
