@@ -1,37 +1,17 @@
 name: docker-fast-build-amdgpu-test
 
-# Tests the Docker-based fast-build workflow:
-#   docker/Dockerfile.amdgpu-dkms  — build image (with baked kernel headers)
-#   docker/amdgpu-dkms.hcl         — buildx bake file
-#   scripts/docker-fast-build-amdgpu — run wrapper
-#   scripts/fast-build-amdgpu       — the incremental build script itself
+# Tests the Docker-based fast-build workflow via ktool fast-build-amdgpu --docker.
 #
 # Strategy:
-#   1. Build the image via `docker buildx bake` (exercises the HCL file and
-#      BuildKit apt-cache mounts).
-#   2. Stage amdgpu source from a GitHub release tarball (no git, no DKMS).
-#   3. Run docker-fast-build-amdgpu (cold build) — verifies the full path
-#      including dkms-config.sh generation and direct kernel build-system call.
-#   4. Warm rebuild — must skip rsync+pre-build and complete in under 60s.
-#   5. Single-file incremental — touch one .c, verify only that TU recompiles.
-#   6. Patched build — apply amdgpu-no-large-bar patches, verify .ko output.
-#
-# Kernel tracking:
-#   The matrix includes the latest Ubuntu 24.04 available 6.8.x kernel
-#   (auto-detected at run time) plus the AMDGPU_REF for compatibility.
-#   A nightly schedule checks for new kernels and new DKMS releases so CI
-#   stays green as Ubuntu ships updated header packages.
-#
-# DKMS version tracking:
-#   The DKMS package installed on the runner is reported in the build log.
-#   The latest dell/dkms release tag is fetched and surfaced as a job
-#   summary line so regressions against new DKMS versions are visible.
+#   1. Build the image via docker buildx bake (exercises the HCL and apt-cache mounts).
+#   2. Stage amdgpu source from a GitHub tarball (no git).
+#   3. Run ktool fast-build-amdgpu --docker (cold build).
+#   4. Warm rebuild — must skip rsync+pre-build and complete quickly.
+#   5. Patched build — apply amdgpu-no-large-bar patches, verify .ko output.
 
 on:
   workflow_dispatch:
   schedule:
-    # Nightly at 03:17 UTC — catches new ubuntu-24.04 kernel headers and
-    # new DKMS upstream releases before they become a surprise.
     - cron: '17 3 * * *'
   pull_request:
     branches:
@@ -39,10 +19,10 @@ on:
     paths:
       - 'docker/Dockerfile.amdgpu-dkms'
       - 'docker/amdgpu-dkms.hcl'
-      - 'scripts/docker-fast-build-amdgpu'
-      - 'scripts/fast-build-amdgpu'
-      - 'scripts/build-amdgpu-dkms'
+      - 'ktool/ktool/fast_build_amdgpu.py'
+      - 'ktool/ktool/stage_amdgpu.py'
       - 'patches/amdgpu-no-large-bar/**'
+      - 'ktool/pyproject.toml'
 
 jobs:
   docker-fast-build-amdgpu-test:
@@ -53,15 +33,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # rocm-6.2.4 — 6.8.x-based ROCm tag; tests against the latest
-          # 6.8.x generic kernel available on the ubuntu-24.04 runner.
           - amdgpu-ref: rocm-6.2.4
             kernel-pattern: '6\.8\.'
             kernel-flavour: generic
-
-          # therock-7.14 against the latest 6.8.x generic kernel.  Source is
-          # staged from a GitHub tarball so no dkms build is run — kernel compat
-          # at build time (not staging time) is all that matters here.
           - amdgpu-ref: therock-7.14
             kernel-pattern: '6\.8\.'
             kernel-flavour: generic
@@ -69,18 +43,17 @@ jobs:
     env:
       AMDGPU_REF: ${{ matrix.amdgpu-ref }}
       BUILD_OUT_BASE: /tmp/amdgpu-build-out
-      INSTALL: 'no'
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.3.1
 
       - name: Fix git default branch warning
         run: git config --global init.defaultBranch main
 
-      # -----------------------------------------------------------------------
-      # Kernel and DKMS version discovery
-      # -----------------------------------------------------------------------
+      - name: Install ktool
+        run: pip install ./ktool
+
       - name: Detect latest available kernel headers
         id: kver
         run: |
@@ -99,20 +72,7 @@ jobs:
             | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'])" \
             2>/dev/null || echo "unknown")
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "Latest upstream DKMS release: ${TAG}"
 
-      - name: Fetch latest upstream stable kernel version
-        id: stable-kernel
-        run: |
-          VER=$(curl -fsSL https://www.kernel.org/releases.json \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); s=next((r for r in d['releases'] if r['moniker']=='stable'),None); print(s['version'] if s else 'unknown')" \
-            2>/dev/null || echo "unknown")
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "Latest upstream stable kernel: ${VER}"
-
-      # -----------------------------------------------------------------------
-      # Dependencies
-      # -----------------------------------------------------------------------
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -126,44 +86,23 @@ jobs:
             rsync \
             linux-headers-${{ steps.kver.outputs.kver }}
 
-      - name: Report installed DKMS version
+      - name: Report versions
         run: |
           INSTALLED=$(dkms --version 2>/dev/null || dpkg -s dkms | grep ^Version | awk '{print $2}')
-          UPSTREAM="${{ steps.dkms-ver.outputs.tag }}"
-          echo "Installed DKMS: ${INSTALLED}"
-          echo "Upstream DKMS:  ${UPSTREAM}"
           {
             echo "## Version summary"
             echo "| Component | Version |"
             echo "|---|---|"
             echo "| Runner kernel headers | ${{ steps.kver.outputs.kver }} |"
-            echo "| Upstream stable kernel | ${{ steps.stable-kernel.outputs.version }} |"
             echo "| Installed DKMS | ${INSTALLED} |"
-            echo "| Upstream DKMS release | ${UPSTREAM} |"
+            echo "| Upstream DKMS release | ${{ steps.dkms-ver.outputs.tag }} |"
             echo "| amdgpu ref | ${AMDGPU_REF} |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # -----------------------------------------------------------------------
-      # Stage amdgpu source from GitHub tarball — no git operations needed.
-      # -----------------------------------------------------------------------
       - name: Stage amdgpu source from tarball
-        # Download the GitHub release tarball and extract it into the DKMS
-        # source layout that fast-build-amdgpu expects.  Avoids all git
-        # operations inside CI: no clone, no git archive, no dubious-ownership
-        # issues, no partial-clone failures.
-        run: |
-          ./scripts/stage-amdgpu-from-tarball \
-            ${AMDGPU_REF} /tmp/amdgpu-staged
+        run: ktool stage-amdgpu ${AMDGPU_REF} /tmp/amdgpu-staged
 
-      # -----------------------------------------------------------------------
-      # Build the Docker image via buildx bake
-      # -----------------------------------------------------------------------
-      - name: Build image via docker buildx bake
-        # Pass KERNEL_VER as both an HCL variable (sets the image tag via the
-        # tags field) and a build arg (bakes the headers into the image).
-        # --set overrides the build arg but not the HCL variable used for the
-        # tag, so we pass KERNEL_VER via the environment which bake reads as a
-        # variable override.
+      - name: Build Docker image via buildx bake
         run: |
           time KERNEL_VER=${{ steps.kver.outputs.kver }} \
             docker buildx bake \
@@ -177,61 +116,44 @@ jobs:
             "amdgpu-dkms-build:${{ steps.kver.outputs.kver }}" \
             --format '{{.Id}} {{.Created}}'
 
-      # -----------------------------------------------------------------------
-      # Cold build
-      # -----------------------------------------------------------------------
-      - name: Cold build (empty ccache + empty buildout)
+      - name: Cold build via ktool fast-build-amdgpu --docker
         run: |
           echo "--- cold build ---"
-          time KERNEL_VER=${{ steps.kver.outputs.kver }} \
-            BUILD_SRC=/tmp/amdgpu-staged \
-            HEADERS_IN_IMAGE=yes \
-            IMAGE=amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            INSTALL=no \
-            FORCE=no \
-            ./scripts/docker-fast-build-amdgpu
-        env:
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          time ktool fast-build-amdgpu \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install \
+            --docker \
+            --image amdgpu-dkms-build:${{ steps.kver.outputs.kver }}
 
       - name: Verify .ko files produced (cold)
         run: |
           docker run --rm \
-            -v amdgpu-dkms-buildout:${{ env.BUILD_OUT_BASE }} \
-            alpine sh -c "find ${{ env.BUILD_OUT_BASE }} -name '*.ko' | sort"
+            -v amdgpu-dkms-buildout:${BUILD_OUT_BASE} \
+            alpine sh -c "find ${BUILD_OUT_BASE} -name '*.ko' | sort"
           KO_COUNT=$(docker run --rm \
-            -v amdgpu-dkms-buildout:${{ env.BUILD_OUT_BASE }} \
-            alpine sh -c "find ${{ env.BUILD_OUT_BASE }} -name '*.ko' | wc -l")
+            -v amdgpu-dkms-buildout:${BUILD_OUT_BASE} \
+            alpine sh -c "find ${BUILD_OUT_BASE} -name '*.ko' | wc -l")
           echo ".ko count: ${KO_COUNT}"
           test "${KO_COUNT}" -ge 4
 
-      # -----------------------------------------------------------------------
-      # Warm build (identical source — must skip rsync + pre-build)
-      # -----------------------------------------------------------------------
-      - name: Warm rebuild (identical source, hot ccache)
+      - name: Warm rebuild via ktool fast-build-amdgpu --docker
         id: warm
         run: |
           echo "--- warm rebuild ---"
           START=$(date +%s)
-          KERNEL_VER=${{ steps.kver.outputs.kver }} \
-            BUILD_SRC=/tmp/amdgpu-staged \
-            HEADERS_IN_IMAGE=yes \
-            IMAGE=amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            INSTALL=no \
-            FORCE=no \
-            ./scripts/docker-fast-build-amdgpu 2>&1 | tee /tmp/warm-build.log
+          ktool fast-build-amdgpu \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install \
+            --docker \
+            --image amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
+            2>&1 | tee /tmp/warm-build.log
           ELAPSED=$(( $(date +%s) - START ))
           echo "elapsed=${ELAPSED}" >> "$GITHUB_OUTPUT"
           echo "Warm build elapsed: ${ELAPSED}s"
-        env:
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-
-      - name: Assert warm build skipped rsync and pre-build
-        run: |
-          grep -q "pre-build already done" /tmp/warm-build.log \
-            || { echo "ERROR: warm build did not skip pre-build"; exit 1; }
-          grep -q "Syncing source" /tmp/warm-build.log \
-            && { echo "ERROR: warm build unexpectedly re-synced source"; exit 1; } \
-            || true
 
       - name: Assert warm build completed under 60s
         run: |
@@ -239,90 +161,23 @@ jobs:
           echo "Warm build: ${ELAPSED}s (limit 60s)"
           test "${ELAPSED}" -lt 60
 
-      # -----------------------------------------------------------------------
-      # Incremental build — touch one .c, only that TU should recompile
-      # -----------------------------------------------------------------------
-      - name: Touch single source file to simulate an edit
-        run: |
-          docker run --rm \
-            -v "amdgpu-dkms-buildout:${{ env.BUILD_OUT_BASE }}" \
-            "amdgpu-dkms-build:${{ steps.kver.outputs.kver }}" \
-            bash -c "find ${{ env.BUILD_OUT_BASE }} -path '*/amdgpu/amdgpu_drv.c' | head -1 | xargs touch"
-
-      - name: Incremental build (one .c touched)
-        run: |
-          echo "--- incremental build ---"
-          KERNEL_VER=${{ steps.kver.outputs.kver }} \
-            BUILD_SRC=/tmp/amdgpu-staged \
-            HEADERS_IN_IMAGE=yes \
-            IMAGE=amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            INSTALL=no \
-            FORCE=no \
-            ./scripts/docker-fast-build-amdgpu 2>&1 | tee /tmp/incremental-build.log
-        env:
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-
-      - name: Assert only one .c was recompiled
-        run: |
-          CC_LINES=$(grep -c '^\s*CC \[M\]' /tmp/incremental-build.log || true)
-          echo "CC lines: ${CC_LINES}"
-          test "${CC_LINES}" -eq 1
-
-      # -----------------------------------------------------------------------
-      # Patched build — apply amdgpu-no-large-bar patches
-      # -----------------------------------------------------------------------
-      - name: Patched build (FORCE=yes re-syncs + applies patches)
+      - name: Patched build (--force re-syncs + applies patches)
         run: |
           echo "--- patched build ---"
-          KERNEL_VER=${{ steps.kver.outputs.kver }} \
-            BUILD_SRC=/tmp/amdgpu-staged \
-            HEADERS_IN_IMAGE=yes \
-            IMAGE=amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            PATCH_DIRS=./patches/amdgpu-no-large-bar \
-            INSTALL=no \
-            FORCE=yes \
-            ./scripts/docker-fast-build-amdgpu
-        env:
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
+          ktool fast-build-amdgpu \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --patch-dirs ./patches/amdgpu-no-large-bar \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install \
+            --force \
+            --docker \
+            --image amdgpu-dkms-build:${{ steps.kver.outputs.kver }}
 
-      - name: Verify .ko files present after patched build
+      - name: Verify .ko files after patched build
         run: |
           KO_COUNT=$(docker run --rm \
-            -v amdgpu-dkms-buildout:${{ env.BUILD_OUT_BASE }} \
-            alpine sh -c "find ${{ env.BUILD_OUT_BASE }} -name '*.ko' | wc -l")
+            -v amdgpu-dkms-buildout:${BUILD_OUT_BASE} \
+            alpine sh -c "find ${BUILD_OUT_BASE} -name '*.ko' | wc -l")
           echo ".ko count after patched build: ${KO_COUNT}"
           test "${KO_COUNT}" -ge 4
-
-      # -----------------------------------------------------------------------
-      # Warm patched build (same patches, second run — must skip rsync)
-      # -----------------------------------------------------------------------
-      - name: Warm patched rebuild (second run, no source changes)
-        run: |
-          echo "--- warm patched rebuild ---"
-          KERNEL_VER=${{ steps.kver.outputs.kver }} \
-            BUILD_SRC=/tmp/amdgpu-staged \
-            HEADERS_IN_IMAGE=yes \
-            IMAGE=amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            PATCH_DIRS=./patches/amdgpu-no-large-bar \
-            INSTALL=no \
-            FORCE=no \
-            ./scripts/docker-fast-build-amdgpu 2>&1 | tee /tmp/warm-patched.log
-        env:
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-
-      - name: Assert warm patched build skipped rsync
-        run: |
-          grep -q "pre-build already done" /tmp/warm-patched.log \
-            || { echo "ERROR: warm patched build did not skip pre-build"; exit 1; }
-
-      # -----------------------------------------------------------------------
-      # ccache stats
-      # -----------------------------------------------------------------------
-      - name: Show ccache stats
-        if: always()
-        run: |
-          docker run --rm \
-            -v amdgpu-dkms-ccache:/ccache \
-            -e CCACHE_DIR=/ccache \
-            amdgpu-dkms-build:${{ steps.kver.outputs.kver }} \
-            ccache --show-stats

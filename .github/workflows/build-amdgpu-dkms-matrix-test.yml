@@ -1,8 +1,7 @@
 name: build-amdgpu-dkms-matrix-test
 
-# A matrix-driven variant of build-amdgpu-dkms-test that covers multiple
-# (AMDGPU_REF, kernel, patch-series) combinations in parallel.  Extend the
-# matrix to add new refs or patch series without touching the job logic.
+# Matrix-driven variant covering multiple (AMDGPU_REF, kernel, patch-series)
+# combinations in parallel.  Extend the matrix to add new refs or patch series.
 
 on:
   workflow_dispatch:
@@ -10,8 +9,10 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/build-amdgpu-dkms'
+      - 'ktool/ktool/build_amdgpu_dkms.py'
+      - 'ktool/ktool/stage_amdgpu.py'
       - 'patches/amdgpu-no-large-bar/**'
+      - 'ktool/pyproject.toml'
 
 jobs:
   build-amdgpu-dkms-matrix-test:
@@ -22,19 +23,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # rocm-6.2.4 against the 6.8 generic kernel — the original baseline
           - amdgpu-ref: rocm-6.2.4
             kernel-pattern: '6\.8\.'
             kernel-flavour: generic
             patch-dirs: ''
 
-          # therock-7.14 against 6.8 generic, no patches
           - amdgpu-ref: therock-7.14
             kernel-pattern: '6\.8\.'
             kernel-flavour: generic
             patch-dirs: ''
 
-          # therock-7.14 against 6.8 generic with the no-large-bar hipfile patches
           - amdgpu-ref: therock-7.14
             kernel-pattern: '6\.8\.'
             kernel-flavour: generic
@@ -42,10 +40,13 @@ jobs:
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v4.3.1
 
       - name: Fix git warning
         run: git config --global init.defaultBranch main
+
+      - name: Install ktool
+        run: pip install ./ktool
 
       - name: Detect available kernel headers version
         id: kver
@@ -66,37 +67,38 @@ jobs:
             dwarves \
             linux-headers-${{ steps.kver.outputs.kver }}
 
-      - name: Run the init-update script to populate src/
-        run: ./scripts/init-update
-        env:
-          GIT_DEPTH: 1
-          CHECK_OUT: 'no'
+      - name: Stage amdgpu source from tarball
+        run: ktool stage-amdgpu ${{ matrix.amdgpu-ref }} /tmp/amdgpu-staged
 
-      - name: Fetch amdgpu remote
-        run: git fetch amdgpu ${{ matrix.amdgpu-ref }}
-        working-directory: ./src
-
-      - name: Run build-amdgpu-dkms
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ matrix.amdgpu-ref }}
-          PATCH_DIRS: ${{ matrix.patch-dirs }}
-          INSTALL: 'no'
+      - name: Run ktool build-amdgpu-dkms
+        run: |
+          PATCH_ARGS=""
+          if [ -n "${{ matrix.patch-dirs }}" ]; then
+            PATCH_ARGS="--patch-dirs ${{ matrix.patch-dirs }}"
+          fi
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --no-install \
+            $PATCH_ARGS
 
       - name: Verify modules were built
         run: |
           dkms status | grep amdgpu
           find /var/lib/dkms/amdgpu -name "*.ko*" | sort
 
-      - name: Build source DKMS .deb (MKDEB=yes)
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ matrix.amdgpu-ref }}
-          PATCH_DIRS: ${{ matrix.patch-dirs }}
-          INSTALL: 'no'
-          MKDEB: 'yes'
+      - name: Build source DKMS .deb (--mkdeb)
+        run: |
+          PATCH_ARGS=""
+          if [ -n "${{ matrix.patch-dirs }}" ]; then
+            PATCH_ARGS="--patch-dirs ${{ matrix.patch-dirs }}"
+          fi
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --no-install \
+            --mkdeb \
+            $PATCH_ARGS
 
       - name: Verify .deb is Architecture:all with source tree
         run: |

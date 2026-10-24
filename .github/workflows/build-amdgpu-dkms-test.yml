@@ -6,7 +6,9 @@ on:
     branches:
       - main
     paths:
-      - 'scripts/build-amdgpu-dkms'
+      - 'ktool/ktool/build_amdgpu_dkms.py'
+      - 'ktool/ktool/stage_amdgpu.py'
+      - 'ktool/pyproject.toml'
 
 jobs:
   build-amdgpu-dkms-test:
@@ -14,19 +16,20 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       AMDGPU_REF: rocm-6.2.4
-      INSTALL: 'no'
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v4.3.1
 
       - name: Fix git warning
         run: git config --global init.defaultBranch main
 
+      - name: Install ktool
+        run: pip install ./ktool
+
       - name: Detect available kernel headers version
         id: kver
         run: |
-          # rocm-6.2.4 supports the 6.8.x kernel series on Ubuntu 24.04
           KVER=$(apt-cache search 'linux-headers-6\.8\.' | grep generic | \
                  sort -V | tail -1 | awk '{print $1}' | sed 's/linux-headers-//')
           echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
@@ -42,56 +45,50 @@ jobs:
             dwarves \
             linux-headers-${{ steps.kver.outputs.kver }}
 
-      - name: Run the init-update script to populate src/
-        run: ./scripts/init-update
-        env:
-          GIT_DEPTH: 1
-          CHECK_OUT: 'no'
+      - name: Stage amdgpu source from tarball
+        run: ktool stage-amdgpu ${AMDGPU_REF} /tmp/amdgpu-staged
 
-      - name: Fetch amdgpu remote
-        run: git fetch amdgpu ${AMDGPU_REF}
-        working-directory: ./src
-
-      - name: Run build-amdgpu-dkms
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
+      - name: Run ktool build-amdgpu-dkms (no install)
+        run: |
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --no-install
 
       - name: Verify modules were built
         run: |
           dkms status | grep amdgpu
           find /var/lib/dkms/amdgpu -name "*.ko*" | sort
 
-      - name: Verify force-rebuild path (idempotency with FORCE=yes)
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
-          FORCE: 'yes'
+      - name: Force-rebuild path (idempotency)
+        run: |
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --no-install \
+            --force
 
-      - name: Build source DKMS .deb (MKDEB=yes)
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
-          MKDEB: 'yes'
+      - name: Build source DKMS .deb (--mkdeb)
+        run: |
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --no-install \
+            --mkdeb
 
-      - name: Verify .deb was produced and has correct structure
+      - name: Verify .deb produced and has correct structure
         run: |
           ls -lh amdgpu-dkms-*.deb
           dpkg-deb --info amdgpu-dkms-*.deb | grep -E "Architecture: all|Package:|Depends:"
           dpkg-deb --contents amdgpu-dkms-*.deb | grep "usr/src/amdgpu-"
 
-      - name: Build with amdgpu-no-large-bar patches and MKDEB=yes
-        run: ./scripts/build-amdgpu-dkms
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          AMDGPU_REF: ${{ env.AMDGPU_REF }}
-          INSTALL: ${{ env.INSTALL }}
-          PATCH_DIRS: ./patches/amdgpu-no-large-bar
-          MKDEB: 'yes'
-          FORCE: 'yes'
+      - name: Build with amdgpu-no-large-bar patches
+        run: |
+          ktool stage-amdgpu ${AMDGPU_REF} /tmp/amdgpu-staged-patched
+          ktool build-amdgpu-dkms \
+            --kernel-ver ${{ steps.kver.outputs.kver }} \
+            --build-src /tmp/amdgpu-staged-patched \
+            --patch-dirs ./patches/amdgpu-no-large-bar \
+            --no-install \
+            --mkdeb \
+            --force
