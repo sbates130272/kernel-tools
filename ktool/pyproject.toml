@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ktool"
+version = "0.1.0"
+description = "Kernel development tools: cross-compile, build, DKMS, and DMA-BUF P2P testing"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{name = "Stephen Bates"}]
+dependencies = ["qemu-tool", "argcomplete"]
+keywords = ["kernel", "linux", "dkms", "amdgpu", "dmabuf", "p2p", "arm64", "riscv", "cross-compile"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Operating System Kernels :: Linux",
+    "Topic :: Software Development :: Build Tools",
+    "Typing :: Typed",
+]
+
+readme = {content-type = "text/markdown", text = """
+# ktool
+
+A unified CLI for Linux kernel development workflows: cross-architecture
+builds, kernel configuration, DKMS module management, remote VM kernel
+installation, and DMA-BUF P2P testing.
+
+```bash
+pipx install ktool
+
+# Build a kernel deb/rpm package from a remote branch
+ktool build-kernel --remote https://github.com/anuj7781/linux-kernel \\
+    --branch anuj/fs-dmabuf-rfc-v11-desc-v2
+
+# Cross-compile for ARM64
+ktool build-cross --arch arm64 --config .config
+
+# Build amdgpu DKMS module
+ktool build-amdgpu-dkms --kernel-ver 6.8.0-60-generic
+
+# Run DMA-BUF P2P validation (rocjitsu GPU + NVMe VM)
+ktool dmabuf-test
+
+# Manage kernel git remotes
+ktool init-update
+
+# Open the bundled man page
+ktool man
+```
+
+Full documentation and source live in the
+[kernel-tools repository](https://github.com/sbates130272/kernel-tools).
+"""}
+
+[project.urls]
+Homepage = "https://github.com/sbates130272/kernel-tools"
+Repository = "https://github.com/sbates130272/kernel-tools"
+Changelog = "https://github.com/sbates130272/kernel-tools/blob/main/CHANGELOG.md"
+Issues = "https://github.com/sbates130272/kernel-tools/issues"
+
+[project.scripts]
+ktool = "ktool.__main__:main"
+
+[tool.setuptools]
+packages = ["ktool"]
+package-dir = {"ktool" = "ktool"}
+
+[tool.setuptools.package-data]
+"ktool" = ["man/ktool.1", "py.typed", "config_scripts/*"]
