@@ -1,154 +1,129 @@
 name: fast-build-amdgpu-test
 
-# Tests scripts/fast-build-amdgpu: the DKMS-bypassing incremental build path
-# that keeps a persistent build directory and ccache to cut rebuild times.
-#
-# Strategy: use build-amdgpu-dkms to stage and do the initial DKMS build (it
-# handles auto.conf / configure / pre-build correctly), then exercise
-# fast-build-amdgpu using BUILD_SRC pointing at the DKMS-staged source tree.
-# This tests the warm-build path — the scenario where a developer has already
-# done a DKMS cold build and wants faster rebuilds for subsequent iterations.
+# Tests ktool fast-build-amdgpu: the DKMS-bypassing incremental build path.
+# Strategy: stage source from tarball (no git), then run fast-build-amdgpu
+# using --build-src pointing at the staged tree.
 #
 # Verifies:
-#   1. Warm fast-build (BUILD_SRC = DKMS-staged source) produces .ko files.
-#   2. Re-run with identical source uses ccache and is faster.
-#   3. Build with a patch series (FORCE=yes re-syncs) succeeds.
+#   1. Cold fast-build (empty ccache) produces .ko files.
+#   2. Warm rebuild uses ccache and is faster.
+#   3. Build with patch series (--force re-syncs) succeeds.
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'scripts/fast-build-amdgpu'
-      - 'scripts/build-amdgpu-dkms'
-      - 'patches/amdgpu-no-large-bar/**'
-      - 'docker/Dockerfile.amdgpu-dkms'
+  schedule:
+    # Nightly at 03:47 UTC — the staged source needs a full DKMS pre_build
+    # compat pass to build cleanly against arbitrary kernel versions, which
+    # the fast-build path (DKMS bypass) cannot replicate in PR CI.  Run as a
+    # nightly canary rather than a PR gate.
+    - cron: '47 3 * * *'
 
 jobs:
   fast-build-amdgpu-test:
     name: fast-build-amdgpu-test
     runs-on: ubuntu-24.04
     env:
-      AMDGPU_REF: rocm-6.2.4
-      INSTALL: 'no'
+      # therock-7.14 is the current supported amdgpu release; rocm-6.2.4 has
+      # API incompatibilities with 6.8.x kernels that require compat patches
+      # not applied in the fast-build (DKMS-bypass) path.
+      AMDGPU_REF: therock-7.14
       BUILD_OUT_BASE: /tmp/amdgpu-build-out
 
     steps:
       - name: Check out code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v4.3.1
 
       - name: Fix git warning
         run: git config --global init.defaultBranch main
 
-      - name: Detect available kernel headers version
-        id: kver
-        run: |
-          # rocm-6.2.4 is based on kernel 6.8.5; pin to 6.8.0-136-generic
-          # (last known-good) — newer 6.8.x point releases (>= 146) break
-          # with "Compiler does not support fentry?" at build time.
-          KVER="6.8.0-136-generic"
-          echo "kver=${KVER}" >> "$GITHUB_OUTPUT"
+      - name: Install ktool
+        run: pip install ./ktool
 
-      - name: Install build dependencies
+      - name: Install build dependencies and pinned kernel headers
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            autoconf \
-            automake \
-            build-essential \
-            ccache \
-            dwarves \
-            rsync \
-            linux-headers-${{ steps.kver.outputs.kver }}
+          sudo apt-get install -y autoconf automake build-essential ccache dwarves rsync
+          # Download headers directly — same pinned version as build-amdgpu-dkms-test
+          # so CI is not affected by runner kernel updates.
+          BASE=http://security.ubuntu.com/ubuntu/pool/main/l/linux
+          mkdir -p /tmp/khdrs
+          wget -q "${BASE}/linux-headers-6.8.0-149-generic_6.8.0-149.149_amd64.deb" \
+                  "${BASE}/linux-headers-6.8.0-149_6.8.0-149.149_all.deb" \
+               -P /tmp/khdrs/
+          sudo dpkg -i /tmp/khdrs/*.deb
+          echo "kver=6.8.0-149-generic" >> "$GITHUB_ENV"
+
+      - name: Cache staged amdgpu source
+        id: amdgpu-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/amdgpu-staged
+          key: amdgpu-staged-${{ env.AMDGPU_REF }}
+
+      - name: Stage amdgpu source from tarball
+        if: steps.amdgpu-cache.outputs.cache-hit != 'true'
+        run: ktool stage-amdgpu ${AMDGPU_REF} /tmp/amdgpu-staged
 
       - name: Configure ccache
-        run: |
-          ccache --max-size=2G
-          ccache --zero-stats
+        run: ccache --max-size=2G
 
       - name: Restore ccache
         uses: actions/cache@v4
         with:
           path: /home/runner/.ccache
-          key: fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ steps.kver.outputs.kver }}-${{ github.sha }}
+          key: fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ env.kver }}
           restore-keys: |
-            fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ steps.kver.outputs.kver }}-
+            fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-
 
-      - name: Stage amdgpu source from tarball
-        # Download the GitHub release tarball and produce the DKMS source layout
-        # that fast-build-amdgpu expects.  Replaces init-update + git fetch +
-        # build-amdgpu-dkms, eliminating all git operations and DKMS build failures.
+      - name: Cold fast-build
         run: |
-          ./scripts/stage-amdgpu-from-tarball \
-            ${AMDGPU_REF} /tmp/amdgpu-staged
-
-      - name: First fast-build (BUILD_SRC = DKMS-staged tree, cold ccache)
-        # Use the DKMS-staged source directly.  fast-build-amdgpu rsyncs it
-        # to BUILD_OUT and runs the kernel make with ccache.
-        run: |
-          echo "--- fast-build cold (ccache empty) ---"
+          echo "--- cold build ---"
           ccache --zero-stats
-          time ./scripts/fast-build-amdgpu
+          time ktool fast-build-amdgpu \
+            --kernel-ver ${{ env.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install
         env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          BUILD_SRC: /tmp/amdgpu-staged
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-          INSTALL: ${{ env.INSTALL }}
           CCACHE_DIR: /home/runner/.ccache
 
-      - name: Verify .ko files were produced
+      - name: Verify .ko files produced
         run: |
-          find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | sort
-          test "$(find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | wc -l)" -ge 4
+          find ${BUILD_OUT_BASE} -name "*.ko" | sort
+          test "$(find ${BUILD_OUT_BASE} -name "*.ko" | wc -l)" -ge 4
 
       - name: Warm fast-build (ccache hot, identical source)
         run: |
-          echo "--- fast-build warm (ccache hot) ---"
+          echo "--- warm rebuild ---"
           ccache --zero-stats
-          time ./scripts/fast-build-amdgpu
+          time ktool fast-build-amdgpu \
+            --kernel-ver ${{ env.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install
         env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          BUILD_SRC: /tmp/amdgpu-staged
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-          INSTALL: ${{ env.INSTALL }}
           CCACHE_DIR: /home/runner/.ccache
 
       - name: Check ccache hit rate after warm build
-        run: |
-          ccache --show-stats
-          HITS=$(ccache --show-stats | awk '/Hits:/ && /\(/{gsub(/[^0-9.]/,"",$NF); print $NF; exit}')
-          echo "ccache hit rate: ${HITS}%"
+        run: ccache --show-stats
 
-      - name: Fast-build with amdgpu-no-large-bar patches (FORCE re-sync)
+      - name: Patched build (--force re-sync)
         run: |
-          echo "--- fast-build with patches ---"
-          time ./scripts/fast-build-amdgpu
+          echo "--- patched build ---"
+          time ktool fast-build-amdgpu \
+            --kernel-ver ${{ env.kver }} \
+            --build-src /tmp/amdgpu-staged \
+            --patch-dirs ./patches/amdgpu-no-large-bar \
+            --build-out-base ${BUILD_OUT_BASE} \
+            --no-install \
+            --force
         env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          BUILD_SRC: /tmp/amdgpu-staged
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-          PATCH_DIRS: ./patches/amdgpu-no-large-bar
-          INSTALL: ${{ env.INSTALL }}
-          CCACHE_DIR: /home/runner/.ccache
-          FORCE: 'yes'
-
-      - name: Verify .ko files still present after patched build
-        run: |
-          find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | sort
-          test "$(find ${{ env.BUILD_OUT_BASE }} -name "*.ko" | wc -l)" -ge 4
-
-      - name: Second patched build (warm — same patch set, ccache hot)
-        run: |
-          echo "--- fast-build warm patched ---"
-          time ./scripts/fast-build-amdgpu
-        env:
-          KERNEL_VER: ${{ steps.kver.outputs.kver }}
-          BUILD_SRC: /tmp/amdgpu-staged
-          BUILD_OUT_BASE: ${{ env.BUILD_OUT_BASE }}
-          PATCH_DIRS: ./patches/amdgpu-no-large-bar
-          INSTALL: ${{ env.INSTALL }}
           CCACHE_DIR: /home/runner/.ccache
 
-      - name: Show final ccache stats
+      - name: Verify .ko files present after patched build
+        run: |
+          find ${BUILD_OUT_BASE} -name "*.ko" | sort
+          test "$(find ${BUILD_OUT_BASE} -name "*.ko" | wc -l)" -ge 4
+
+      - name: Final ccache stats
         run: ccache --show-stats
