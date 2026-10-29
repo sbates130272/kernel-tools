@@ -1,0 +1,590 @@
+.TH KTOOL 1 "October 2026" "ktool 0.1.0" "User Commands"
+.SH NAME
+ktool \- Linux kernel development tools
+.SH SYNOPSIS
+.B ktool
+.RB [ \-\-version ]
+.I {build\-cross,build\-kernel,build\-amdgpu\-dkms,fast\-build\-amdgpu,build\-remote,init\-update,stage\-amdgpu,dmabuf\-test,bnxt,man}
+.RI [ options ]
+.SH DESCRIPTION
+.B ktool
+is a unified CLI for Linux kernel development workflows.
+It replaces a collection of bash scripts with a single installable Python
+package, providing consistent flag handling, idempotent steps, and
+incremental build acceleration via ccache.
+.TP
+.B build\-cross
+Cross-compile a kernel and modules for ARM64 or RISC-V from a local kernel
+source tree.
+.TP
+.B build\-kernel
+Clone a remote kernel branch and build Debian or RPM packages.
+Preset flags cover the io_uring DMA-BUF, KNOD and p2pdma trees.
+.TP
+.B build\-amdgpu\-dkms
+Stage the amdgpu out-of-tree driver source and build it as a DKMS module
+for a specified kernel version.
+.TP
+.B fast\-build\-amdgpu
+Incremental amdgpu OOT build that bypasses DKMS and keeps a persistent
+build output directory, cutting warm rebuild times from minutes to seconds.
+Optionally runs inside a Docker container.
+.TP
+.B build\-remote
+Pull a running kernel config from a remote host or VM, apply a
+.BR localmodconfig ,
+optionally apply a config-script fragment, build a kernel package, and
+install it.
+Must be called from the top level of a kernel source tree.
+.TP
+.B init\-update
+Initialise a kernel git repository with the standard remotes
+(Linus, stable, WSL2, lk-library, amdgpu, ubuntu-noble) or update them.
+.TP
+.B stage\-amdgpu
+Download the amdgpu source from a GitHub release tarball and produce the
+DKMS source layout that
+.B build\-amdgpu\-dkms
+and
+.B fast\-build\-amdgpu
+expect, including autoconf\-generated configure.
+No git operations required.
+.TP
+.B dmabuf\-test
+End-to-end DMA-BUF P2P validation: spin up a rocjitsu GPU VM, build and
+install the 7.2.x backport kernel, build the amdgpu-dkms module, then run
+raw NVMe and XFS filesystem P2P tests.
+Parallel amdgpu source copy overlaps kernel build; all stages are
+idempotent.
+.TP
+.B bnxt
+Build or install the out-of-tree Broadcom bnxt_en and bnxt_re drivers.
+Two sub\-subcommands:
+.B build
+and
+.BR install .
+.TP
+.B man
+Open this man page using the system
+.BR man (1)
+pager, or fall back to
+.BR less (1)
+via nroff if man is not available.
+.SH OPTIONS
+.TP
+.B \-\-version
+Print the ktool version and exit.
+.TP
+.B \-\-help
+Print a summary of subcommands and exit.
+Pass
+.B \-\-help
+after a subcommand name for that subcommand's full flag list.
+.SH SUBCOMMAND REFERENCE
+.SS build\-cross
+.B ktool build\-cross
+.RB [ \-\-arch
+.IR {arm64,riscv} ]
+.RB [ \-\-config
+.IR FILE ]
+.RB [ \-\-cross\-tools
+.IR PREFIX ]
+.RB [ \-\-threads
+.IR N ]
+.RB [ \-\-clean ]
+.PP
+Must be called from the top level of a kernel source tree.
+Builds the kernel image, installs modules and headers, then archives them
+into a timestamped output directory.
+.TP
+.BI \-\-arch " {arm64,riscv}"
+Target architecture (default:
+.IR arm64 ).
+.TP
+.BI \-\-config " FILE"
+Kernel .config file to use (default:
+.IR .config ).
+.TP
+.BI \-\-cross\-tools " PREFIX"
+Cross-compiler prefix (default:
+.I aarch64-linux-gnu-
+for arm64,
+.I riscv64-linux-gnu-
+for riscv).
+.TP
+.BI \-\-threads " N"
+Parallel build jobs (default: 16).
+.TP
+.B \-\-clean
+Run
+.I make clean
+before building.
+.SS build\-kernel
+.B ktool build\-kernel
+.RB [ \-\-remote
+.IR URL ]
+.RB [ \-\-branch
+.IR REF ]
+.RB [ \-\-config
+.IR FILE ]
+.RB [ \-\-patch
+.IR PATH ]
+.RB [ \-\-threads
+.IR N ]
+.RB [ \-\-preset\-dmabuf | \-\-preset\-knod | \-\-preset\-p2pdma ]
+.PP
+Clones a kernel branch and builds
+.I deb-pkg
+(or
+.I rpm-pkg
+with
+.BR \-\-rpm ).
+.TP
+.BI \-\-remote " URL"
+Kernel git remote (default: kernel.org stable).
+.TP
+.BI \-\-branch " REF"
+Branch or tag to build (default:
+.IR v4.14.49 ).
+.TP
+.BI \-\-config " FILE"
+Kernel .config to use; runs
+.I make defconfig
+when omitted.
+.TP
+.BI \-\-patch " PATH"
+Patch file or directory to apply before building.
+.TP
+.BI \-\-threads " N"
+Parallel build jobs (default: 8).
+.TP
+.B \-\-preset\-dmabuf
+Use Anuj Gupta's fs-dmabuf-rfc-v11-desc-v2 tree with 128 threads.
+.TP
+.B \-\-preset\-knod
+Use Taehee Yoo's KNOD dev tree (knod-7.2) with 128 threads.
+.TP
+.B \-\-preset\-p2pdma
+Use the stable p2pdma tree with the
+.I patches/p2pdma
+series and 128 threads.
+.SS build\-amdgpu\-dkms
+.B ktool build\-amdgpu\-dkms
+.B \-\-kernel\-ver
+.I VER
+.RB [ \-\-amdgpu\-ref
+.IR REF ]
+.RB [ \-\-build\-src
+.IR DIR ]
+.RB [ \-\-patch\-dirs
+.IR DIRS ]
+.RB [ \-\-install | \-\-no\-install ]
+.RB [ \-\-mkdeb ]
+.RB [ \-\-force ]
+.TP
+.BI \-\-kernel\-ver " VER"
+Target kernel version (required), e.g.
+.IR 6.8.0-136-generic .
+Kernel headers must be installed at
+.IR /lib/modules/VER/build .
+.TP
+.BI \-\-amdgpu\-ref " REF"
+amdgpu git ref to stage from the kernel working tree in
+.I ./src
+(default:
+.IR master ).
+Ignored when
+.B \-\-build\-src
+is set.
+.TP
+.BI \-\-build\-src " DIR"
+Pre-staged source directory produced by
+.B ktool stage\-amdgpu
+or a previous run.
+Skips all git operations.
+.TP
+.BI \-\-patch\-dirs " DIRS"
+Colon-separated list of directories whose
+.I *.patch
+files are applied in sorted order.
+.TP
+.BR \-\-install " | " \-\-no\-install
+Install the built modules (default: install).
+.TP
+.B \-\-mkdeb
+Produce a kernel-independent source
+.I .deb
+(Architecture: all) for deployment to other hosts.
+.TP
+.B \-\-force
+Re-stage and rebuild even when the output already exists.
+.SS fast\-build\-amdgpu
+.B ktool fast\-build\-amdgpu
+.B \-\-kernel\-ver
+.I VER
+.RB [ \-\-amdgpu\-ref
+.IR REF ]
+.RB [ \-\-build\-src
+.IR DIR ]
+.RB [ \-\-build\-out\-base
+.IR DIR ]
+.RB [ \-\-patch\-dirs
+.IR DIRS ]
+.RB [ \-\-install | \-\-no\-install ]
+.RB [ \-\-force ]
+.RB [ \-\-docker ]
+.RB [ \-\-image
+.IR IMAGE ]
+.PP
+Keeps a persistent
+.I BUILD_OUT
+directory between runs so the kernel build system can reuse unchanged
+.I .o
+files.
+When
+.B ccache
+is on
+.BR PATH ,
+it is injected automatically.
+Warm builds after a single-line source edit typically complete in under 5s.
+.TP
+.BI \-\-build\-out\-base " DIR"
+Persistent kernel build output directory (default:
+.IR ./amdgpu-build-out ).
+.TP
+.B \-\-docker
+Run the build inside the
+.I amdgpu-dkms-build
+Docker container, using named volumes
+.I amdgpu-dkms-ccache
+and
+.I amdgpu-dkms-buildout
+for persistence.
+.TP
+.BI \-\-image " IMAGE"
+Docker image to use when
+.B \-\-docker
+is set (default:
+.IR amdgpu-dkms-build:<kernel-ver> ).
+.SS build\-remote
+.B ktool build\-remote
+.RB [ \-\-remote\-name
+.IR HOST ]
+.RB [ \-\-config
+.IR NAME ]
+.RB [ \-\-config\-script
+.IR NAME ]
+.RB [ \-\-label
+.IR SUFFIX ]
+.RB [ \-\-no\-build ]
+.RB [ \-\-no\-install ]
+.RB [ \-\-wsl\-mode ]
+.PP
+Must be called from the top level of a kernel source tree.
+Pulls the remote host's running kernel config, runs
+.BR localmodconfig ,
+applies the chosen config-script fragment, builds a kernel deb package,
+ships it to the remote, and reboots.
+.TP
+.BI \-\-remote\-name " HOST"
+SSH hostname of the target (default:
+.IR none ,
+which skips the SSH fetch and uses the local running config).
+.TP
+.BI \-\-config " NAME"
+Config filename on the remote under
+.I /boot/
+(e.g.
+.IR config-6.8.0-60-generic ).
+Auto-detected when omitted.
+.TP
+.BI \-\-config\-script " NAME"
+Config fragment to apply:
+.BR default ", " amdgpu ", " amdgpu-dkms ", " infiniband ", " nvme-target ", " wsl .
+.TP
+.BI \-\-label " SUFFIX"
+LOCALVERSION suffix appended to the kernel version string.
+.TP
+.B \-\-no\-build
+Stop after the
+.I localmodconfig
+setup step without running
+.IR make .
+.TP
+.B \-\-no\-install
+Build packages but do not ship or install them.
+.TP
+.B \-\-wsl\-mode
+Build a WSL2 kernel targeting the local host.
+No remote SSH connection required.
+.SS init\-update
+.B ktool init\-update
+.RB [ \-\-kernel\-dir
+.IR DIR ]
+.RB [ \-\-depth
+.IR N ]
+.RB [ \-\-skip\-launchpad ]
+.RB [ \-\-check\-out ]
+.RB [ \-\-add\-remote
+.IR NAME
+.IR URL ]
+.PP
+Initialises a kernel git repository at
+.I \-\-kernel\-dir
+(creating it if absent) with the standard remotes, then fetches from all of
+them.
+Running a second time is safe: existing remotes are skipped.
+.TP
+.BI \-\-kernel\-dir " DIR"
+Path to the kernel git repository (default:
+.IR ./src ).
+.TP
+.BI \-\-depth " N"
+Shallow clone depth (default: 1; use 0 for a full history clone).
+.TP
+.B \-\-skip\-launchpad
+Skip the ubuntu-noble Launchpad remote (useful in CI where Launchpad is slow or blocked).
+.TP
+.B \-\-check\-out
+Check out the latest stable tag after fetching.
+Pass a specific branch ref to check out that branch instead.
+.TP
+.BI \-\-add\-remote " NAME URL"
+Add an extra remote.
+Repeatable.
+.SS stage\-amdgpu
+.B ktool stage\-amdgpu
+.I ref
+.I output_dir
+.RB [ \-\-repo
+.IR OWNER/REPO ]
+.PP
+Downloads the amdgpu source for
+.I ref
+from GitHub (tag first, branch head as fallback) and extracts it into the
+DKMS source layout expected by
+.B build\-amdgpu\-dkms
+and
+.BR fast\-build\-amdgpu .
+Runs
+.BR aclocal ,
+.BR autoheader ,
+and
+.B autoconf
+to generate the
+.I configure
+script required by
+.IR pre-build.sh .
+.TP
+.I ref
+amdgpu ref to fetch: a tag (e.g.
+.IR rocm-6.2.4 ,
+.IR therock-7.14 )
+or a branch head.
+.TP
+.I output_dir
+Destination directory for the staged DKMS source tree.
+Removed and recreated on each run.
+.TP
+.BI \-\-repo " OWNER/REPO"
+GitHub repository to fetch from (default:
+.IR ROCm/amdgpu ).
+.SS dmabuf\-test
+.B ktool dmabuf\-test
+.RB [ \-\-vm\-name
+.IR NAME ]
+.RB [ \-\-ssh\-port
+.IR PORT ]
+.RB [ \-\-kernel\-branch
+.IR REF ]
+.RB [ \-\-skip\-kernel\-build ]
+.RB [ \-\-skip\-dkms ]
+.RB [ \-\-clean ]
+.RB [ \-\-clean\-full ]
+.PP
+Runs the complete DMA-BUF P2P validation pipeline.
+Per-stage timing is printed at the end; all stages are idempotent and
+skipped when their outputs already exist.
+Requires
+.BR oras ,
+.BR qemu\-tool ,
+.BR docker ,
+and kernel build tools.
+.TP
+.BI \-\-vm\-name " NAME"
+Name of the test VM (default:
+.IR dmabuf-test ).
+.TP
+.BI \-\-ssh\-port " PORT"
+Host SSH port forwarded to the VM (default: 2232).
+.TP
+.BI \-\-kernel\-branch " REF"
+Stable kernel branch or tag to build (default:
+.IR v7.2.4 ).
+.TP
+.B \-\-skip\-kernel\-build
+Skip the kernel build stage and use whatever kernel the VM is already running.
+.TP
+.B \-\-skip\-dkms
+Skip the amdgpu DKMS build stage.
+.TP
+.B \-\-clean
+Remove kernel debs, .config and orig tarballs before running.
+.TP
+.B \-\-clean\-full
+.B \-\-clean
+plus the backing qcow2 and VM metadata.
+.SS bnxt build
+.B ktool bnxt build
+.RB [ \-\-dir
+.IR DIR ]
+.RB [ \-\-kdir
+.IR DIR ]
+.RB [ \-\-clean | \-\-no\-clean ]
+.RB [ \-\-verbose ]
+.PP
+Builds the
+.I bnxt_en
+and
+.I bnxt_re
+drivers from source and copies the resulting
+.I .ko
+files to the current directory.
+Picks up
+.B ARCH
+and
+.B CROSS_COMPILE
+from the environment for cross-compilation.
+.TP
+.BI \-\-dir " DIR"
+Directory containing the
+.I bnxt_en/
+and
+.I bnxt_re/
+source subdirectories (default:
+.IR ./ ).
+.TP
+.BI \-\-kdir " DIR"
+Kernel build/source directory (default:
+.IR /home/users/sbates/kernel/linux-arm64 ).
+.TP
+.BR \-\-clean " | " \-\-no\-clean
+Run
+.I make clean
+before building (default: clean).
+.SS bnxt install
+.B ktool bnxt install
+.RB [ \-\-bnxt\-en
+.IR FILE ]
+.RB [ \-\-bnxt\-re
+.IR FILE ]
+.RB [ \-\-kernel
+.IR VER ]
+.PP
+Installs pre-built
+.I bnxt_en.ko
+and
+.I bnxt_re.ko
+into the running kernel's module tree and runs
+.BR depmod .
+Must be run as root.
+.TP
+.BI \-\-bnxt\-en " FILE"
+Path to
+.I bnxt_en.ko
+(default:
+.IR ./bnxt_en.ko ).
+.TP
+.BI \-\-bnxt\-re " FILE"
+Path to
+.I bnxt_re.ko
+(default:
+.IR ./bnxt_re.ko ).
+.TP
+.BI \-\-kernel " VER"
+Kernel version string (default: current
+.IR "uname \-r" ).
+.SH EXAMPLES
+Initialise the kernel source tree with standard remotes:
+.PP
+.RS
+.EX
+ktool init\-update \-\-kernel\-dir ./src \-\-depth 1 \-\-skip\-launchpad
+.EE
+.RE
+.PP
+Build the io_uring DMA-BUF kernel (Anuj's fs-dmabuf v11 tree):
+.PP
+.RS
+.EX
+ktool build\-kernel \-\-preset\-dmabuf
+.EE
+.RE
+.PP
+Stage amdgpu source from a tarball and build the DKMS module:
+.PP
+.RS
+.EX
+ktool stage\-amdgpu therock\-7.14 /tmp/amdgpu\-staged
+ktool build\-amdgpu\-dkms \e
+    \-\-kernel\-ver $(uname \-r) \e
+    \-\-build\-src /tmp/amdgpu\-staged \e
+    \-\-no\-install
+.EE
+.RE
+.PP
+Incremental amdgpu build (warm builds complete in ~5s):
+.PP
+.RS
+.EX
+ktool fast\-build\-amdgpu \e
+    \-\-kernel\-ver 6.8.0\-136\-generic \e
+    \-\-build\-src /tmp/amdgpu\-staged \e
+    \-\-build\-out\-base ./amdgpu\-build\-out \e
+    \-\-no\-install
+.EE
+.RE
+.PP
+Build a localmodconfig kernel for a remote VM and install it:
+.PP
+.RS
+.EX
+ktool build\-remote \e
+    \-\-remote\-name my\-test\-vm \e
+    \-\-config\-script default \e
+    \-\-label \-my\-feature
+.EE
+.RE
+.SH FILES
+.TP
+.I ./src/
+Default location for the kernel git working tree, populated by
+.BR "ktool init\-update" .
+.TP
+.I ~/.ccache/
+ccache cache directory used by
+.B fast\-build\-amdgpu
+and
+.BR dmabuf\-test .
+Set
+.B CCACHE_DIR
+to override.
+.TP
+.I /var/lib/qemu-tool/images/
+Default VM image directory used by
+.BR dmabuf\-test .
+Set
+.B VM_IMAGES_DIR
+to override.
+.TP
+.I /var/lib/dkms/
+DKMS module tree written by
+.BR build\-amdgpu\-dkms .
+.SH SEE ALSO
+.BR make (1),
+.BR dkms (8),
+.BR qemu\-tool (1),
+.BR git (1),
+.BR ssh (1)
+.SH AUTHOR
+Stephen Bates

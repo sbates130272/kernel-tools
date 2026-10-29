@@ -13,3 +13,10 @@ output-arm64-*
 *.dsc
 amdgpu-build/
 userspace/amdgpu-dmabuf-io/test_p2p_io
+amdgpu-build-out/
+
+# ktool Python package build artefacts
+ktool/*.egg-info/
+ktool/**/__pycache__/
+ktool/dist/
+ktool/build/

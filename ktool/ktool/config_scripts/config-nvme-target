@@ -1,0 +1,16 @@
+source ${SCRIPT_DIR}/../config-scripts/config-default
+source ${SCRIPT_DIR}/../config-scripts/config-infiniband
+
+./scripts/config -m NVME_TARGET
+./scripts/config -m NVME_AUTH
+./scripts/config -m NVME_FABRICS
+./scripts/config -m NVME_RDMA
+./scripts/config -m NVME_TCP
+./scripts/config --enable NVME_TCP_TLS
+./scripts/config --enable NVME_HOST_AUTH
+./scripts/config --enable NVME_TARGET_PASSTHRU
+./scripts/config -m NVME_TARGET_LOOP
+./scripts/config -m NVME_TARGET_RDMA
+./scripts/config -m NVME_TARGET_TCP
+./scripts/config --enable NVME_TARGET_TCP_TLS
+./scripts/config --enable NVME_TARGET_AUTH

@@ -1,0 +1,7 @@
+_d="$(dirname "${BASH_SOURCE[0]}")"
+source "${_d}/config-default"
+
+./scripts/config -m INFINIBAND
+./scripts/config --enable INFINIBAND_ADDR_TRANS
+./scripts/config --enable INFINIBAND_USER_ACCESS
+./scripts/config -m RDMA_RXE

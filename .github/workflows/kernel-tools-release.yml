@@ -1,0 +1,118 @@
+name: kernel-tools - Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-version:
+    name: Verify Version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Check tag and pyproject.toml agree
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PY_VERSION=$(sed -n 's/^version = "\(.*\)"$/\1/p' ktool/pyproject.toml | head -1)
+
+          echo "tag:            ${TAG_VERSION}"
+          echo "pyproject.toml: ${PY_VERSION}"
+
+          rc=0
+          if [ "${TAG_VERSION}" != "${PY_VERSION}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match ktool/pyproject.toml ${PY_VERSION}"
+            rc=1
+          fi
+          if ! grep -q "^## \[${GITHUB_REF_NAME}\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [${GITHUB_REF_NAME}] - <date>' heading"
+            rc=1
+          fi
+          if [ "${rc}" -ne 0 ]; then
+            echo "::error::run scripts/release.sh ${TAG_VERSION} to stamp all files"
+            exit 1
+          fi
+          echo "tag and pyproject.toml agree on ${TAG_VERSION}"
+
+  build-python:
+    name: Build Python Dists
+    needs: verify-version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and sdist
+        run: |
+          pip install build
+          python -m build ktool/ --outdir dist/
+
+      - name: Check the dists are well formed
+        run: |
+          pip install twine
+          twine check --strict dist/*
+
+      - name: Upload dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-dists
+          path: dist/
+          if-no-files-found: error
+
+  publish-github:
+    name: Publish GitHub Release
+    needs: build-python
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2.3.2
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: |
+            artifacts/*.whl
+            artifacts/*.tar.gz
+
+  publish-pypi:
+    name: Publish PyPI
+    needs: publish-github
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/ktool
+    permissions:
+      id-token: write
+    steps:
+      - name: Download dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-dists
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@v1.14.2

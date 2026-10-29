@@ -12,20 +12,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@v4.3.1
+
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
-      - name: Run shellcheck on all scripts
+
+      - name: Run shellcheck on remaining shell scripts
         run: |
           shellcheck -x \
-            scripts/init-update \
-            scripts/build-amdgpu-dkms \
-            scripts/fast-build-amdgpu \
-            scripts/build-remote \
-            scripts/build-kernel-debrpm \
-            scripts/build-latest-io-uring-dmabuf-kernel \
-            scripts/build-latest-p2pdma-kernel \
-            arch-tools/build-arm64 \
-            arch-tools/build-riscv \
-            arch-tools/bnxt-oot-build \
-            arch-tools/bnxt-drv-fix
+            scripts/release.sh

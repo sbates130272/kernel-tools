@@ -1,384 +1,194 @@
-# kernel-tools: A collection of useful Linux kernel tooling
+# kernel-tools: Linux kernel development tools
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-linux-lightgrey.svg)](README.md)
+[![PyPI](https://img.shields.io/pypi/v/ktool.svg)](https://pypi.org/p/ktool)
+[![ktool](https://github.com/sbates130272/kernel-tools/actions/workflows/ktool-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/ktool-test.yml)
 [![Spelling](https://github.com/sbates130272/kernel-tools/actions/workflows/spell-check-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/spell-check-test.yml)
-[![ShellCheck](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/shellcheck.yml)
 [![Userspace Build](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/userspace-build-test.yml)
 [![AMDGPU DKMS](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-test.yml)
 [![AMDGPU DKMS Matrix](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/build-amdgpu-dkms-matrix-test.yml)
 [![Fast Build AMDGPU](https://github.com/sbates130272/kernel-tools/actions/workflows/fast-build-amdgpu-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/fast-build-amdgpu-test.yml)
 [![Docker Fast Build AMDGPU](https://github.com/sbates130272/kernel-tools/actions/workflows/docker-fast-build-amdgpu-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/docker-fast-build-amdgpu-test.yml)
 [![Init Update](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/init-update-test.yml)
-[![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/release.yml)
+[![Release](https://github.com/sbates130272/kernel-tools/actions/workflows/kernel-tools-release.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/kernel-tools-release.yml)
 [![DMA-BUF VM Test](https://github.com/sbates130272/kernel-tools/actions/workflows/dmabuf-vm-test.yml/badge.svg)](https://github.com/sbates130272/kernel-tools/actions/workflows/dmabuf-vm-test.yml)
 [![KNOD](https://img.shields.io/badge/KNOD-RFC%20v1-orange.svg)](https://lore.kernel.org/dri-devel/20260719175857.4071636-1-ap420073@gmail.com/)
 [![io_uring DMA-BUF](https://img.shields.io/badge/io__uring%20DMA--BUF-v11%20for--next-green.svg)](https://github.com/anuj7781/linux-kernel/tree/anuj/fs-dmabuf-rfc-v11-desc-v2)
 [![amdgpu no-large-BAR](https://img.shields.io/badge/amdgpu-no--large--BAR-blue.svg)](patches/amdgpu-no-large-bar/README.md)
 
-This repo contains a few scripts I find useful for kernel
-hacking. Feel free to use and abuse these as you see fit.
+A collection of Linux kernel development tools, exposed as a single
+installable Python CLI: `ktool`. Covers cross-architecture kernel builds,
+DKMS module management, remote VM kernel installation, amdgpu staging, and
+end-to-end DMA-BUF P2P validation.
 
 ## Installation
 
-I normally have a top-level folder called kernel which I place this
-repo into. I then have a number of sub-folders:
+```bash
+pipx install ktool
+```
 
-- **```src```**: The [Linux Kernel][ref-linus] tree(s). A good way to
-  initialize this folder is to use the ```./scripts/init-update```
-  script (see below for details).
-- **```useful-configs```**: A folder for some good kernel configs. For
-  example this includes a really small (but valid) config, a QEMU
-  specific config and an Ubuntu 18.04 like config.
-- **```configs```**: A folder for all the other configs I use, I
-  usually don't repo this or tie it to a separate private repo.
-- **```debs```**: A folder of handy output .debs (I almost always work
-  on Debian packages and not RPMs). Again I don't repo this.
--**```config-scripts```**: A folder of handy flavors of kernel
-  configurations. Useful for building a kernel with certain attributes
-  that I desire.
-
-## Useful Scripts
-
-### [init-update](./scripts/init-update)
-
-This [script](./scripts/init-update) can be used to initialize a Linux
-kernel git repo with Linus', Greg's and the [Microsoft WSL][ref-wsl]
-kernel source trees. It can also be used to fetch updates from these
-remotes.
-
-### [build-amdgpu-dkms](./scripts/build-amdgpu-dkms)
-
-This [script](./scripts/build-amdgpu-dkms) stages the AMD GPU driver
-source from a local kernel working tree (populated by `init-update`),
-builds it as a DKMS module for a specified kernel version, and
-optionally installs it. It mirrors the layout AMD's own `sources`
-manifest uses for the official `amdgpu-dkms` package — staging only
-the AMD-specific and DRM-core out-of-tree files rather than the full
-kernel tree — so the build works correctly against the host kernel's
-own headers.
-
-Parallelism is maximised via `--jobs=$(nproc)`. If `ccache` is present
-it is injected into the DKMS build automatically. All steps are
-idempotent; `FORCE=yes` re-stages and rebuilds from scratch.
-
-Dependencies: `dkms`, `autoconf`, `automake`, `build-essential`,
-`dwarves` (for BTF), and kernel headers for the target kernel:
+Or from a checkout:
 
 ```bash
+pip install ./ktool
+```
+
+Run `ktool --help` to see all subcommands.  A man page is bundled with the
+package; open it with:
+
+```bash
+ktool man
+```
+
+## Subcommands
+
+| Subcommand | Description |
+| --- | --- |
+| `build-cross` | Cross-compile a Linux kernel for ARM64 or RISC-V |
+| `build-kernel` | Clone a kernel branch and build deb/rpm packages |
+| `build-amdgpu-dkms` | Stage and build the amdgpu DKMS module |
+| `fast-build-amdgpu` | Incremental amdgpu OOT build with persistent `.o` files |
+| `build-remote` | Build a `localmodconfig` kernel targeting a remote host or VM |
+| `init-update` | Initialise or update the kernel source git repo with standard remotes |
+| `stage-amdgpu` | Stage amdgpu DKMS source from a GitHub release tarball (no git needed) |
+| `dmabuf-test` | Full DMA-BUF P2P validation: rocjitsu GPU VM, 7.2.x kernel, raw NVMe + XFS |
+| `bnxt` | Build or install OOT Broadcom bnxt\_en/bnxt\_re drivers |
+| `man` | Open the bundled ktool man page |
+
+## Examples
+
+### Initialise the kernel source tree
+
+```bash
+ktool init-update --kernel-dir ./src --depth 1 --skip-launchpad
+```
+
+### Build the io\_uring DMA-BUF kernel (Anuj's fs-dmabuf v11 tree)
+
+```bash
+ktool build-kernel --preset-dmabuf
+```
+
+### Stage amdgpu source from a GitHub tarball and build the DKMS module
+
+```bash
+ktool stage-amdgpu therock-7.14 /tmp/amdgpu-staged
+
 sudo apt install dkms autoconf automake build-essential dwarves \
   linux-headers-$(uname -r)
+
+ktool build-amdgpu-dkms \
+  --kernel-ver $(uname -r) \
+  --build-src /tmp/amdgpu-staged \
+  --no-install
 ```
 
-Example — build `therock-7.14` against the Ubuntu Noble generic kernel:
+### Incremental amdgpu build with ccache (bypass DKMS)
 
 ```bash
-KERNEL_VER=6.8.0-136-generic \
-  AMDGPU_REMOTE=amdgpu \
-  AMDGPU_REF=therock-7.14 \
-  INSTALL=no \
-  ./scripts/build-amdgpu-dkms
+ktool fast-build-amdgpu \
+  --kernel-ver 6.8.0-136-generic \
+  --build-src /tmp/amdgpu-staged \
+  --build-out-base ./amdgpu-build-out \
+  --no-install
 ```
 
-Example — build with a patch series and install:
+Re-running after a single-file edit recompiles only that translation unit and
+relinks; everything else hits ccache. Warm builds typically complete in under 5s.
+
+### Build a localmodconfig kernel for a remote VM
 
 ```bash
-KERNEL_VER=6.8.0-136-generic \
-  AMDGPU_REF=therock-7.14 \
-  PATCH_DIRS=./patches/my-fixes \
-  ./scripts/build-amdgpu-dkms
+# Call from the top of a kernel source tree checked out locally
+ktool build-remote \
+  --remote-name my-test-vm \
+  --config-script default \
+  --label -my-feature
 ```
 
-Example — build with the no-large-BAR hipfile patches and produce a
-kernel-independent DKMS `.deb` for deployment to a G4an EC2 instance
-(build against `6.8.0-1008-aws` headers locally to smoke-test, then
-`dpkg -i` on the target):
+### Run the full DMA-BUF P2P test (requires rocjitsu GPU VM infrastructure)
 
 ```bash
-sudo apt install linux-headers-6.8.0-1008-aws
-KERNEL_VER=6.8.0-1008-aws \
-  AMDGPU_REF=therock-7.14 \
-  PATCH_DIRS=./patches/amdgpu-no-large-bar \
-  INSTALL=no MKDEB=yes \
-  ./scripts/build-amdgpu-dkms
-# Produces: amdgpu-dkms-therock-7.14-<sha>.deb  (Architecture: all)
+ktool dmabuf-test
 ```
 
-To enable BTF symbol generation (opt-in, requires `pahole` and
-`CONFIG_DEBUG_INFO_BTF_MODULES=y` in the target kernel):
+### Cross-compile for ARM64
 
 ```bash
-AMDGPU_BTF=1 KERNEL_VER=6.8.0-136-generic ./scripts/build-amdgpu-dkms
+# Call from the top of a kernel source tree
+ktool build-cross --arch arm64 --config /path/to/.config --threads 32
 ```
 
-| Variable        | Default      | Description                                             |
-| --------------- | ------------ | ------------------------------------------------------- |
-| `KERNEL_VER`    | *(required)* | Target kernel version (used to smoke-test the build)    |
-| `AMDGPU_REMOTE` | `amdgpu`     | Git remote name in `src/`                               |
-| `AMDGPU_REF`    | `master`     | Tag or branch to build                                  |
-| `PATCH_DIRS`    | *(empty)*    | Colon-separated patch directories                       |
-| `INSTALL`       | `yes`        | Set `no` to build without installing locally            |
-| `MKDEB`         | `no`         | Set `yes` to produce a kernel-independent source `.deb` |
-| `FORCE`         | `no`         | Set `yes` to re-stage and rebuild                       |
-| `KERNEL_DIR`    | `./src`      | Path to kernel working tree                             |
-| `BUILD_SRC`     | *(empty)*    | Skip staging; use this pre-staged source directory      |
+## Workspace layout
 
-### [fast-build-amdgpu](./scripts/fast-build-amdgpu)
+The conventional workspace alongside this repo:
 
-This [script](./scripts/fast-build-amdgpu) is a faster alternative to
-`build-amdgpu-dkms` for iterative patch development. DKMS rebuilds
-everything from scratch on every run (it creates a fresh build directory
-each time), which means even a single-line source change triggers a
-full multi-minute compile. `fast-build-amdgpu` bypasses DKMS and keeps
-a **persistent build output directory** across runs, so the kernel build
-system can reuse unchanged `.o` files. Combined with `ccache`, repeated
-builds after a small edit typically run 3–4× faster.
+- **`src/`** — Linux kernel source tree (initialise with `ktool init-update`)
+- **`useful-configs/`** — kernel `.config` fragments for common targets
+- **`config-scripts/`** — kernel configuration fragments applied by `build-remote`
+- **`patches/`** — patch series (p2pdma, amdgpu-no-large-bar, dmabuf-72x-backport, knod)
+- **`configs/`** — personal configs (not tracked)
+- **`debs/`** — built `.deb` output (not tracked)
 
-Additional dependencies beyond `build-amdgpu-dkms`: `ccache`, `rsync`.
+## amdgpu DKMS — fast incremental builds
 
-```bash
-sudo apt install ccache rsync
-```
+`ktool fast-build-amdgpu` keeps a persistent build output directory across
+runs so the kernel build system can reuse unchanged `.o` files. Combined with
+`ccache`, warm builds after a single-line edit typically run 3–4× faster than
+a full DKMS rebuild. Use `--docker` to run the build inside the
+`amdgpu-dkms-build` container (built from `docker/Dockerfile.amdgpu-dkms`
+via `docker/amdgpu-dkms.hcl`).
 
-#### Quick start
+### Benchmark (roc-7.2.x, 6.8.0-142-generic, 32 cores, Docker container)
 
-Create two named Docker volumes (or local directories) for persistence:
-
-```bash
-docker volume create amdgpu-dkms-ccache
-docker volume create amdgpu-dkms-buildout
-```
-
-First build (cold — stages source, compiles everything, populates ccache):
-
-```bash
-KERNEL_VER=6.8.0-142-generic \
-  AMDGPU_REF=amdgpu/roc-7.2.x \
-  BUILD_OUT_BASE=./amdgpu-build-out \
-  INSTALL=no \
-  CCACHE_DIR=~/.ccache \
-  ./scripts/fast-build-amdgpu
-```
-
-Subsequent builds after editing a patch (only changed translation units
-recompile, everything else hits ccache):
-
-```bash
-KERNEL_VER=6.8.0-142-generic \
-  AMDGPU_REF=amdgpu/roc-7.2.x \
-  PATCH_DIRS=./patches/amdgpu-no-large-bar \
-  BUILD_OUT_BASE=./amdgpu-build-out \
-  INSTALL=no \
-  CCACHE_DIR=~/.ccache \
-  ./scripts/fast-build-amdgpu
-```
-
-When the patch set changes the script detects it via a hash file and
-re-syncs + re-stages automatically. Pass `FORCE=yes` to force a full
-re-sync and rebuild from scratch.
-
-#### Using a pre-staged source tree (skip git operations)
-
-Set `BUILD_SRC=<path>` to a writable copy of the staged source tree to
-skip the `git archive` extraction step entirely. This is useful in
-Docker containers where the git repository is not reachable:
-
-```bash
-# Mount a pre-staged source (e.g. from /usr/src/amdgpu-<ver>/)
-# and a persistent build-output volume.
-BUILD_SRC=/mnt/staged-ro \
-  KERNEL_VER=6.8.0-142-generic \
-  BUILD_OUT_BASE=/buildout \
-  INSTALL=no \
-  bash scripts/fast-build-amdgpu
-```
-
-#### Docker workflow
-
-The recommended way to use `fast-build-amdgpu` inside Docker is via the
-[`docker-fast-build-amdgpu`](./scripts/docker-fast-build-amdgpu) wrapper
-script, which manages named volumes, bind-mounts, and image selection
-automatically. It uses [`docker/amdgpu-dkms.hcl`](./docker/amdgpu-dkms.hcl)
-(a `docker buildx bake` file) to build the image with BuildKit apt cache
-mounts so image rebuilds are fast after the first pull.
-
-Build the image for a specific kernel (baked headers, fast subsequent rebuilds):
-
-```bash
-docker buildx bake --builder default \
-  --set "amdgpu-dkms-build.args.KERNEL_VER=6.8.0-142-generic" \
-  --load \
-  -f docker/amdgpu-dkms.hcl
-```
-
-> **Note for AMD corporate networks:** pass `--builder default` to use the
-> local Docker daemon's BuildKit. The remote `docker-container` builder
-> fails behind ZScaler due to TLS certificate interception.
-
-Run a fast incremental build inside Docker (first run stages source; subsequent
-runs reuse `.o` files and ccache from the named volumes):
-
-```bash
-KERNEL_VER=6.8.0-142-generic \
-  BUILD_SRC=/usr/src/amdgpu-amdgpu-roc-7.2.x-<sha> \
-  HEADERS_IN_IMAGE=yes \
-  INSTALL=no \
-  ./scripts/docker-fast-build-amdgpu
-```
-
-With patches:
-
-```bash
-KERNEL_VER=6.8.0-142-generic \
-  BUILD_SRC=/usr/src/amdgpu-amdgpu-roc-7.2.x-<sha> \
-  HEADERS_IN_IMAGE=yes \
-  PATCH_DIRS=./patches/amdgpu-no-large-bar \
-  INSTALL=no \
-  ./scripts/docker-fast-build-amdgpu
-```
-
-Set `FORCE=yes` to force a full re-sync and rebuild from scratch.
-
-#### Benchmark (roc-7.2.x, 6.8.0-142-generic, 32 cores, Docker container)
-
-| Scenario                                            | Wall time   |
-| --------------------------------------------------- | ----------- |
-| Cold build (empty ccache + buildout volumes)        | ~2m15s      |
-| Warm rebuild (identical source, hot ccache + .o)    | **~4.6s**   |
-| Single-file incremental (one `.c` touched)          | **~11s**    |
-| Patched build (`FORCE=yes`, re-sync + patch apply)  | ~2m20s      |
-| Same patches, second run                            | **~4.6s**   |
-
-The warm path skips rsync, `pre-build.sh`, and `configure` entirely —
-only the kernel build-system check runs (effectively a no-op when no
-sources changed). The incremental path recompiles only the touched
-translation unit via ccache lookup, then relinks the `.ko`.
-
-| Variable         | Default              | Description                                    |
-| ---------------- | -------------------- | ---------------------------------------------- |
-| `KERNEL_VER`     | *(required)*         | Target kernel version                          |
-| `BUILD_OUT_BASE` | `./amdgpu-build-out` | Persistent build output directory              |
-| `BUILD_SRC`      | *(empty)*            | Pre-staged source dir; skip git operations     |
-| `AMDGPU_REF`     | `master`             | Branch or tag (unused when `BUILD_SRC` is set) |
-| `PATCH_DIRS`     | *(empty)*            | Colon-separated patch directories              |
-| `INSTALL`        | `yes`                | Set `no` to skip install                       |
-| `FORCE`          | `no`                 | Set `yes` to re-sync and rebuild from scratch  |
-| `CCACHE_DIR`     | *(env)*              | ccache cache directory                         |
-
-### [build-remote](./scripts/build-remote)
-
-This [script](./scripts/build-remote) can be used to fetch the kernel
-config from a remote machine and then use this as a base to build a
-new kernel and install it on that machine. This is useful for running
-on VMs but it only tested for Ubuntu-based systems.
-
-### build-kernel-debrpm
-
-```build-kernel-debrpm``` is a shell script that builds a kernel
-debian package or RHEL/CentOS RPM files for installation of a linux
-kernel. See the notes in the file for more information. Note this
-script lives in the scripts folder.
-
-An example run of this script that would build a p2pdma enabled kernel
-based on version 4 of the patchsets would be:
-```
-REMOTE=https://github.com/sbates130272/linux-p2pmem \
-  REMOTE_BRANCH=pci-p2p-v4 \
-  CONFIG=<config-file> \
-  ./build-kernel-debrpm
-```
-And an example that builds a monolithic kernel based on the default
-config (with all modules converted to "yes") for v4.14.30 would be:
-```
-REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-  REMOTE_BRANCH=v4.14.30 \
-  MONO=yes \
-  ./build-kernel-debrpm
-```
-And an example that builds a non-monolithic kernel based on the default
-config (with all modules converted to "yes") for v4.14.30 for arm64 on
-a non-arm64 host system would be:
-```
-REMOTE= git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git \
-  REMOTE_BRANCH=v4.14.30 \
-  ARCH=arm64 \
-  CROSS_COMPILE=aarch64-linux-gnu- \
-  ./build-kernel-debrpm
-```
-Note all files associated with the unique generation of this kernel
-(the .config and the <path-file> (if present) are included in the
-output tarball along with a ```.build-info file``` that contains the
-information needed to reproduce the .debs or .rpms.
-
-### build-latest-p2pdma-kernel
-
-A helper script around ```build-kernel-debrpm``` that should always
-point to the latest and greatest p2pdma kernel. Run this to generate a
-p2pdma kernel unless you know what you are doing and want to use
-build-kernel-debrpm. Only supports x86_64 right now.
-
-#### Patches for build-latest-p2pdma-kernel
-
-```build-latest-p2pdma-kernel``` uses three patches (located in the
-patches folder) to address some issues with p2pdma kernels. Namely:
-
-+ **acs_disable**: Add a kernel configuration parameter
-(```acs_disable```) that turns off [PCIe ACS][ref-sriov]
-everywhere. This can be useful for testing p2pdma. To enable this mode
-add ```pci=acs_disable``` to your kernel command line parameters.
-
-+ **p2pmem-pci**: Adds a device driver for p2pmem exposed by a device
-driver. Based on [this repository][ref-eid]. We use this to expose
-p2pmem to userspace applications.
-
-+ **p2pdma patches**: A couple of changes were made in ```p2pdma.c```
-in the v5.4 kernel that broke out of tree drivers for p2pmem. These
-patches fix this. They are not needed for pre-v5.4 kernels.
-
-**Note that the current version of the ```patches``` sub-folder this
-repository only supports v5.6.x series kernel source due to changes in
-```drivers/pci/probe.c```. You will need to generate your own patches
-to address other kernels. We plan to address this issue soon!**
+| Scenario | Wall time |
+| --- | --- |
+| Cold build (empty ccache + buildout volumes) | ~2m15s |
+| Warm rebuild (identical source, hot ccache + .o) | **~4.6s** |
+| Single-file incremental (one `.c` touched) | **~11s** |
+| Patched build (`--force`, re-sync + patch apply) | ~2m20s |
+| Same patches, second run | **~4.6s** |
 
 ## docker
 
-A Dockerfile exists that can generate the environment needed to run
-```build-latest-p2pdma-kernel```. This can make the generation of the
-.deb for this kernel simpler for some users. To generate the kernel
-Debian packages this way proceed as follows from the top-level folder
-of this repo. Note that since we always pull from the HEAD of the
-repository we need to run docker with ```-no-cache```. This slows down
-the build time but avoids incorrect builds.
-```
-cd docker
-docker build --no-cache -t kernel-tools:latest .
-```
-once the image has run to completion you can obtain the tarball via
-the following (from either the docker folder or the top-level folder
-for this repo).
-```
-docker create --name kernel-tools kernel-tools:latest
-docker cp kernel-tools:/kernel/build-kernel-deb.docker.tar.gz .
-docker rm kernel-tools
-```
-You can then install the .deb using the same approach as a native
-build using build-latest-p2pdma-kernel.
+`docker/Dockerfile.amdgpu-dkms` builds a kernel-header-baked image for
+amdgpu OOT builds. Use the HCL bake file:
 
-## arch-tools
+```bash
+KERNEL_VER=6.8.0-142-generic \
+  docker buildx bake --builder default --load -f docker/amdgpu-dkms.hcl
+```
 
-The ```arch-tools``` sub-folder contains a few useful tools for
-building Linux kernels and kernel modules for non-amd64 based
-systems. This includes some platform-specific tools and some generic
-ISA tools.
+> **AMD corporate networks:** pass `--builder default` — the remote
+> `docker-container` builder fails behind ZScaler.
 
-One of the most useful of these tools is the ```build-arm64``` script
-which can build a ARM64 kernel and modules using a cross-compiler
-approach. You should call this script from the top-level of a kernel
-source tree. See the header of the script for more information. There
-is also a ```build-riscv``` script which can do something similar for
-riscv32 and riscv64 ISA.
+## patches
 
-[ref-linus]: https://www.kernel.org/
-[ref-sriov]: http://www.intel.com/content/www/us/en/pci-express/pci-sig-sr-iov-primer-sr-iov-technology-paper.html
-[ref-eid]: https://github.com/Eideticom/p2pmem-pci
-[ref-wsl]: https://github.com/microsoft/WSL2-Linux-Kernel
+Patch series live under `patches/`:
+
+- **`p2pdma/`** — PCIe peer-to-peer DMA patches (`acs_disable`, `p2pmem-pci`)
+- **`amdgpu-no-large-bar/`** — amdgpu no-large-BAR hipfile patches for G4an
+  and similar systems without resizable BAR support
+- **`dmabuf-72x-backport/`** — io\_uring DMA-BUF v11 backport onto v7.2.x stable
+- **`knod/`** — Taehee Yoo's KNOD in-kernel network offload RFC patches
+
+## Release process
+
+Cut a release from `main` with a clean working tree:
+
+```bash
+scripts/release.sh 0.2.0
+```
+
+This stamps the version in `ktool/pyproject.toml` and `CHANGELOG.md`,
+commits with `-s`, and creates a signed GPG tag. Push to trigger the
+release workflow:
+
+```bash
+git push origin main v0.2.0
+```
+
+The workflow verifies version alignment, builds the wheel and sdist, publishes
+a GitHub release, then publishes to PyPI via Trusted Publishing (no API token
+in the repo).

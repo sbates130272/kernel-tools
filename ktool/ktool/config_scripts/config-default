@@ -1,0 +1,15 @@
+./scripts/config -m BLK_DEV_NVME
+./scripts/config -m NVME_KEYRING
+./scripts/config -m NVME_CORE
+./scripts/config --enable NVME_MULTIPATH
+./scripts/config --enable NVME_HWMON
+
+./scripts/config -m NET_9P
+./scripts/config -m NET_9P_FD
+./scripts/config -m NET_9P_VIRTIO
+./scripts/config -m 9P_FS
+./scripts/config --enable 9P_FSCACHE
+./scripts/config --enable 9P_FS_POSIX_ACL
+./scripts/config --enable 9P_FS_SECURITY
+
+

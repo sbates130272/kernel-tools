@@ -54,6 +54,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     libelf-dev \
     libssl-dev \
     pkg-config \
+    python3-pip \
     rsync
 
 # Kernel headers are bind-mounted at runtime (not baked into the image) so
