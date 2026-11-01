@@ -24,7 +24,7 @@ jobs:
           tar czf "useful-configs-${{ github.ref_name }}.tar.gz" useful-configs/
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@v3.0.3
         with:
           files: |
             io-uring-dmabuf-patches-*.tar.gz
