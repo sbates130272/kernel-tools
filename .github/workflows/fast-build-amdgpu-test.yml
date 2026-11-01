@@ -55,7 +55,7 @@ jobs:
 
       - name: Cache staged amdgpu source
         id: amdgpu-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /tmp/amdgpu-staged
           key: amdgpu-staged-${{ env.AMDGPU_REF }}
@@ -68,7 +68,7 @@ jobs:
         run: ccache --max-size=2G
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /home/runner/.ccache
           key: fast-build-amdgpu-ccache-${{ env.AMDGPU_REF }}-${{ env.kver }}

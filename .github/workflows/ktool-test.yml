@@ -258,7 +258,7 @@ jobs:
 
       - name: Cache kernel source tree
         id: kernel-src-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ./src
           key: kernel-src-stable-${{ runner.os }}-v1
