@@ -25,8 +25,8 @@ from ktool._util import run, die, require_cmds
 _ERNIC_REMOTE = "https://github.com/ROCm/rocm-ernic.git"
 _KERNEL_REMOTE = "https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux-stable.git"
 _AMDGPU_DKMS_PKG = "amdgpu-dkms"
-_ROCM_APT_REPO = "https://repo.radeon.com/rocm/apt/6.3 jammy main"
-_ROCM_GPG_URL = "https://repo.radeon.com/rocm/rocm.gpg.key"
+_AMDGPU_APT_REPO = "https://repo.radeon.com/amdgpu/latest/ubuntu jammy main"
+_AMDGPU_GPG_URL = "https://repo.radeon.com/rocm/rocm.gpg.key"
 _RDMA_CORE_REMOTE = "https://github.com/linux-rdma/rdma-core.git"
 
 
@@ -93,6 +93,9 @@ def register(sub: argparse._SubParsersAction) -> None:
                    help="rocm-ernic commit SHA (default: from ernic-pins.yml)")
     p.add_argument("--ernic-remote", default=_ERNIC_REMOTE,
                    help="rocm-ernic git remote URL")
+    default_ionic_ref = pins.get("ionic_kernel_pin", default_tag)
+    p.add_argument("--ionic-kernel-ref", default=default_ionic_ref,
+                   help="Kernel ref for ionic sparse-clone (default: from ernic-pins.yml)")
     p.add_argument("--rdma-core-sha", default="",
                    help="rdma-core commit SHA to check out (read from ernic repo if empty)")
     p.add_argument("--skip-kernel", action="store_true",
@@ -137,6 +140,10 @@ def _find_patch_dirs(args: argparse.Namespace) -> Path:
 
 
 def _apply_patch_dir(patch_dir: Path, src_dir: Path) -> None:
+    sentinel = src_dir / f".patches-applied-{patch_dir.name}"
+    if sentinel.exists():
+        print(f"  Patches from {patch_dir.name} already applied, skipping")
+        return
     patches = sorted(patch_dir.glob("*.patch"))
     if not patches:
         die(f"No .patch files found in {patch_dir}")
@@ -144,6 +151,7 @@ def _apply_patch_dir(patch_dir: Path, src_dir: Path) -> None:
         print(f"  Applying {pf.name}")
         with open(pf, "rb") as fh:
             subprocess.run(["patch", "-p1"], stdin=fh, check=True, cwd=src_dir)
+    sentinel.touch()
 
 
 def _config_script_path(name: str) -> Path:
@@ -226,28 +234,39 @@ def _build_kernel(args: argparse.Namespace, work: Path, dist: Path,
 # ---------------------------------------------------------------------------
 
 def _fetch_amdgpu_dkms(work: Path, dist: Path) -> None:
-    print("[2/5] Fetching amdgpu-dkms from ROCm apt repo ...")
+    print("[2/5] Fetching amdgpu-dkms from AMD apt repo ...")
     dl_dir = work / "amdgpu-dkms-download"
     dl_dir.mkdir(parents=True, exist_ok=True)
 
-    # Add ROCm repo key + source if not already present
-    key_path = Path("/etc/apt/trusted.gpg.d/rocm.gpg")
-    if not key_path.exists():
-        run(["bash", "-c",
-             f"curl -fsSL {_ROCM_GPG_URL} | sudo gpg --dearmor -o {key_path}"],
-            sudo=False)
-    src_path = Path("/etc/apt/sources.list.d/rocm.list")
-    if not src_path.exists():
-        run(["bash", "-c",
-             f"echo 'deb {_ROCM_APT_REPO}' | sudo tee {src_path}"],
-            sudo=False)
-        run(["sudo", "apt-get", "update", "-qq"])
+    # Detect Ubuntu codename at runtime — avoids hardcoding jammy/resolute/etc.
+    codename = subprocess.check_output(["lsb_release", "-cs"], text=True).strip()
+    base = "https://repo.radeon.com/amdgpu/latest/ubuntu"
 
-    run(["apt-get", "download", _AMDGPU_DKMS_PKG], cwd=dl_dir, sudo=True)
-    copied = _copy_debs(dl_dir, "amdgpu-dkms_*.deb", dist)
-    if not copied:
-        die("apt-get download did not produce amdgpu-dkms_*.deb")
-    print(f"  amdgpu-dkms: {copied[0].name}")
+    # Fetch the package index and extract the .deb path for amdgpu-dkms
+    pkgs_gz = f"{base}/dists/{codename}/main/binary-amd64/Packages.gz"
+    raw = subprocess.check_output(["bash", "-c",
+                                   f"curl -fsSL {pkgs_gz} | gunzip"],
+                                  text=True)
+    deb_path: str | None = None
+    in_pkg = False
+    for line in raw.splitlines():
+        if line == f"Package: {_AMDGPU_DKMS_PKG}":
+            in_pkg = True
+        elif in_pkg and line.startswith("Filename:"):
+            deb_path = line.split(None, 1)[1].strip()
+            break
+        elif in_pkg and line == "":
+            break
+    if not deb_path:
+        die(f"{_AMDGPU_DKMS_PKG} not found in {pkgs_gz}")
+
+    deb_url = f"{base}/{deb_path}"
+    deb_name = Path(deb_path).name
+    dest = dl_dir / deb_name
+    print(f"  Downloading {deb_name} ...")
+    run(["curl", "-fsSL", "-o", str(dest), deb_url])
+    shutil.copy2(dest, dist / deb_name)
+    print(f"  amdgpu-dkms: {deb_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +274,7 @@ def _fetch_amdgpu_dkms(work: Path, dist: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def _build_ionic_dkms(args: argparse.Namespace, work: Path, dist: Path,
-                      kernel_src: Path) -> None:
+                      kernel_src: Path | None) -> None:
     print("[3/5] Building ionic DKMS debs ...")
     ernic = work / "rocm-ernic"
     if not ernic.exists():
@@ -264,83 +283,180 @@ def _build_ionic_dkms(args: argparse.Namespace, work: Path, dist: Path,
     else:
         print(f"  Reusing rocm-ernic clone at {ernic}")
 
-    # Fetch ionic sources into a staging area
+    # Fetch ionic sources into a staging area; the script handles patching
+    # internally via git am -- pass absolute paths since it changes directory.
     ionic_src = work / "ionic-sources"
-    ionic_src.mkdir(parents=True, exist_ok=True)
-    fetch_script = ernic / "ansible" / "files" / "scripts" / "fetch-ionic-sources.sh"
+    fetch_script = (ernic / "ansible" / "files" / "scripts" / "fetch-ionic-sources.sh").resolve()
     if not fetch_script.exists():
         die(f"fetch-ionic-sources.sh not found at {fetch_script}")
-    run(["bash", str(fetch_script), str(ionic_src)], cwd=ernic)
 
-    # Apply srq patches then p4 patch to the ionic kernel tree
-    srq_dir = ernic / "patches" / "srq"
-    p4_dir = ernic / "patches" / "p4"
-    ionic_kernel_src = ionic_src / "drivers" / "net" / "ethernet" / "pensando" / "ionic"
-    if not ionic_kernel_src.is_dir():
-        die(f"ionic kernel source not found at {ionic_kernel_src}")
+    srq_dir = (ernic / "ansible" / "files" / "patches" / "srq").resolve()
+    p4_dir = (ernic / "ansible" / "files" / "patches" / "p4").resolve()
+    if not srq_dir.is_dir():
+        die(f"srq patch dir not found: {srq_dir}")
 
-    _apply_patch_dir(srq_dir, ionic_src)
+    fetch_cmd = [
+        "bash", str(fetch_script),
+        "--source-dir", str(ionic_src.resolve()),
+        "--kernel-ref", args.ionic_kernel_ref,
+        "--patches-dir", str(srq_dir),
+    ]
     if p4_dir.is_dir():
-        _apply_patch_dir(p4_dir, ionic_src)
+        fetch_cmd += ["--patches-dir", str(p4_dir)]
+    run(fetch_cmd)
 
-    # Determine kernel version string from headers
-    kver_file = kernel_src / "include" / "config" / "kernel.release"
-    if kver_file.exists():
-        kver = kver_file.read_text().strip()
-    else:
-        result = run(["make", "-s", "kernelrelease"], cwd=kernel_src, capture=True)
-        kver = result.stdout.strip()
+    if not (ionic_src / "drivers" / "net" / "ethernet" / "pensando" / "ionic").is_dir():
+        die(f"ionic kernel source not found under {ionic_src}")
 
-    headers_dir = kernel_src  # use the build tree directly for DKMS
+    # --- ionic-ernic DKMS source deb ---
+    # dkms add/build/mkdeb all require root even with custom trees, so create
+    # the deb manually with dpkg-deb; dkms runs on the target via postinst.
+    pkg_name = "ionic-ernic"
+    pkg_version = args.ionic_kernel_ref.lstrip("v").replace("/", "-")
+    deb_root = work / "ionic-ernic-deb-root"
+    if deb_root.exists():
+        shutil.rmtree(deb_root)
 
-    # DKMS build (rootless, out-of-tree)
-    dkms_tree = work / "dkms-tree"
-    dkms_src_tree = work / "dkms-src"
-    dkms_tree.mkdir(parents=True, exist_ok=True)
-    dkms_src_tree.mkdir(parents=True, exist_ok=True)
+    src_dest = deb_root / "usr" / "src" / f"{pkg_name}-{pkg_version}"
+    (src_dest / "eth").mkdir(parents=True)
+    (src_dest / "rdma").mkdir(parents=True)
+    shutil.copytree(
+        str(ionic_src / "drivers" / "net" / "ethernet" / "pensando" / "ionic"),
+        str(src_dest / "eth"), dirs_exist_ok=True)
+    shutil.copytree(
+        str(ionic_src / "drivers" / "infiniband" / "hw" / "ionic"),
+        str(src_dest / "rdma"), dirs_exist_ok=True)
+    uapi_src = ionic_src / "include" / "uapi" / "rdma"
+    if (uapi_src / "ionic-abi.h").exists():
+        (src_dest / "uapi" / "rdma").mkdir(parents=True)
+        shutil.copy2(str(uapi_src / "ionic-abi.h"), str(src_dest / "uapi" / "rdma"))
 
-    dkms_conf = ionic_src / "dkms.conf"
-    if not dkms_conf.exists():
-        die(f"dkms.conf not found at {dkms_conf}")
+    (src_dest / "Kbuild").write_text(textwrap.dedent("""\
+        ifneq ($(wildcard $(src)/uapi/rdma/ionic-abi.h),)
+        LINUXINCLUDE := -I$(src)/uapi $(LINUXINCLUDE)
+        endif
+        ccflags-y += -I$(src)/eth
+        obj-m += ionic.o
+        ionic-y := $(patsubst $(src)/eth/%.c,eth/%.o,$(wildcard $(src)/eth/*.c))
+        ccflags-y += -I$(src)/rdma -I$(src)/eth
+        obj-m += ionic_rdma.o
+        ionic_rdma-y := $(patsubst $(src)/rdma/%.c,rdma/%.o,$(wildcard $(src)/rdma/*.c))
+    """))
+    (src_dest / "dkms.conf").write_text(textwrap.dedent(f"""\
+        PACKAGE_NAME="{pkg_name}"
+        PACKAGE_VERSION="{pkg_version}"
+        BUILT_MODULE_NAME[0]="ionic"
+        DEST_MODULE_LOCATION[0]="/updates/dkms"
+        BUILT_MODULE_NAME[1]="ionic_rdma"
+        DEST_MODULE_LOCATION[1]="/updates/dkms"
+        AUTOINSTALL="no"
+        MAKE="make -C ${{kernel_source_dir}} M=${{dkms_tree}}/{pkg_name}/{pkg_version}/build modules"
+        CLEAN="make -C ${{kernel_source_dir}} M=${{dkms_tree}}/{pkg_name}/{pkg_version}/build clean"
+    """))
 
-    run(["dkms", "add",
-         "--sourcetree", str(dkms_src_tree),
-         "--dkmstree", str(dkms_tree),
-         str(ionic_src)])
-    run(["dkms", "build",
-         "--sourcetree", str(dkms_src_tree),
-         "--dkmstree", str(dkms_tree),
-         "--kernelsourcedir", str(headers_dir),
-         "-k", kver])
-    run(["dkms", "mkdeb",
-         "--sourcetree", str(dkms_src_tree),
-         "--dkmstree", str(dkms_tree),
-         "-k", kver])
+    debian = deb_root / "DEBIAN"
+    debian.mkdir()
+    (debian / "control").write_text(textwrap.dedent(f"""\
+        Package: {pkg_name}-dkms
+        Version: {pkg_version}
+        Architecture: all
+        Maintainer: AMD ERNIC <ernic@amd.com>
+        Depends: dkms
+        Description: ionic + ionic_rdma DKMS source (ernic-patched)
+         Patched for AMD ERNIC P4 auxiliary device support. After installing
+         the target kernel, build with:
+         dkms build -m {pkg_name} -v {pkg_version} -k <kernel-ver>
+    """))
+    postinst = debian / "postinst"
+    postinst.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        set -e
+        case "$1" in
+            configure)
+                dkms add -m {pkg_name} -v {pkg_version} --no-depmod 2>/dev/null || true
+                ;;
+        esac
+    """))
+    postinst.chmod(0o755)
+    prerm = debian / "prerm"
+    prerm.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        set -e
+        case "$1" in
+            remove|upgrade|deconfigure)
+                dkms remove -m {pkg_name} -v {pkg_version} --all --no-depmod 2>/dev/null || true
+                ;;
+        esac
+    """))
+    prerm.chmod(0o755)
 
-    # ernic_p4 is a separate DKMS module
+    ionic_deb = work / f"{pkg_name}-dkms_{pkg_version}_all.deb"
+    run(["dpkg-deb", "--build", "--root-owner-group", str(deb_root), str(ionic_deb)])
+    shutil.copy2(ionic_deb, dist / ionic_deb.name)
+    print(f"  ionic-ernic DKMS deb: {ionic_deb.name}")
+
+    # --- ernic-p4 DKMS source deb ---
     p4_src = ernic / "drivers" / "ernic_p4"
-    if p4_src.is_dir():
-        p4_dkms_tree = work / "dkms-tree-p4"
-        p4_dkms_src = work / "dkms-src-p4"
-        p4_dkms_tree.mkdir(parents=True, exist_ok=True)
-        p4_dkms_src.mkdir(parents=True, exist_ok=True)
-        run(["dkms", "add",
-             "--sourcetree", str(p4_dkms_src),
-             "--dkmstree", str(p4_dkms_tree),
-             str(p4_src)])
-        run(["dkms", "build",
-             "--sourcetree", str(p4_dkms_src),
-             "--dkmstree", str(p4_dkms_tree),
-             "--kernelsourcedir", str(headers_dir),
-             "-k", kver])
-        run(["dkms", "mkdeb",
-             "--sourcetree", str(p4_dkms_src),
-             "--dkmstree", str(p4_dkms_tree),
-             "-k", kver])
-        _copy_debs(p4_dkms_tree, "**/*.deb", dist)
+    if not p4_src.is_dir():
+        print("  ernic_p4 source not found, skipping")
+        return
 
-    copied = _copy_debs(dkms_tree, "**/*.deb", dist)
-    print(f"  ionic DKMS debs: {[d.name for d in copied]}")
+    p4_dkms_conf = p4_src / "dkms.conf"
+    p4_pkg_name = "ernic-p4"
+    p4_pkg_version = "0.2.0"
+    for line in p4_dkms_conf.read_text().splitlines():
+        if line.startswith("PACKAGE_VERSION="):
+            p4_pkg_version = line.split("=", 1)[1].strip().strip('"')
+            break
+
+    p4_deb_root = work / "ernic-p4-deb-root"
+    if p4_deb_root.exists():
+        shutil.rmtree(p4_deb_root)
+
+    p4_src_dest = p4_deb_root / "usr" / "src" / f"{p4_pkg_name}-{p4_pkg_version}"
+    shutil.copytree(str(p4_src), str(p4_src_dest))
+
+    p4_debian = p4_deb_root / "DEBIAN"
+    p4_debian.mkdir()
+    (p4_debian / "control").write_text(textwrap.dedent(f"""\
+        Package: {p4_pkg_name}-dkms
+        Version: {p4_pkg_version}
+        Architecture: all
+        Maintainer: AMD ERNIC <ernic@amd.com>
+        Depends: dkms, {pkg_name}-dkms (= {pkg_version})
+        Description: ernic_p4 DKMS source for AMD ERNIC P4 auxiliary device
+         Requires ionic sources from {pkg_name}-dkms. After installing the
+         target kernel, build with:
+         dkms build -m {p4_pkg_name} -v {p4_pkg_version} -k <kernel-ver>
+    """))
+    p4_postinst = p4_debian / "postinst"
+    p4_postinst.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        set -e
+        case "$1" in
+            configure)
+                echo "/usr/src/{pkg_name}-{pkg_version}" > /etc/ernic-p4-ionic-src
+                dkms add -m {p4_pkg_name} -v {p4_pkg_version} --no-depmod 2>/dev/null || true
+                ;;
+        esac
+    """))
+    p4_postinst.chmod(0o755)
+    p4_prerm = p4_debian / "prerm"
+    p4_prerm.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        set -e
+        case "$1" in
+            remove|upgrade|deconfigure)
+                dkms remove -m {p4_pkg_name} -v {p4_pkg_version} --all --no-depmod 2>/dev/null || true
+                ;;
+        esac
+    """))
+    p4_prerm.chmod(0o755)
+
+    p4_deb = work / f"{p4_pkg_name}-dkms_{p4_pkg_version}_all.deb"
+    run(["dpkg-deb", "--build", "--root-owner-group", str(p4_deb_root), str(p4_deb)])
+    shutil.copy2(p4_deb, dist / p4_deb.name)
+    print(f"  ernic-p4 DKMS deb: {p4_deb.name}")
 
 
 # ---------------------------------------------------------------------------
@@ -411,7 +527,7 @@ def _build_config_deb(work: Path, dist: Path, ernic_src: Path) -> None:
     (debian / "postinst").chmod(0o755)
 
     deb_name = f"{pkg_name}_{_ERNIC_CONFIG_VERSION}_{_ERNIC_CONFIG_ARCH}.deb"
-    run(["dpkg-deb", "--build", str(pkg_root), str(dist / deb_name)])
+    run(["dpkg-deb", "--build", "--root-owner-group", str(pkg_root), str(dist / deb_name)])
     print(f"  ernic-config: {deb_name}")
 
 
@@ -464,13 +580,12 @@ def _build_rdma_core_deb(args: argparse.Namespace, work: Path, dist: Path,
          f"-DCMAKE_INSTALL_PREFIX=/usr",
          "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
          "-DNO_PYVERBS=1",
-         str(rdma_src)], cwd=build_dir)
+         str(rdma_src.resolve())], cwd=build_dir)
     run(["ninja", f"-j{args.threads}"], cwd=build_dir)
-    run(["cpack", "-G", "DEB"], cwd=build_dir)
+    cpack_ok = subprocess.run(["cpack", "-G", "DEB"], cwd=build_dir).returncode == 0
 
-    copied = _copy_debs(build_dir, "*.deb", dist)
+    copied = _copy_debs(build_dir, "*.deb", dist) if cpack_ok else []
     if not copied:
-        # Fallback: manual fakeroot deb
         _rdma_core_manual_deb(build_dir, dist, rdma_src)
     else:
         print(f"  rdma-core debs: {[d.name for d in copied]}")
@@ -479,7 +594,9 @@ def _build_rdma_core_deb(args: argparse.Namespace, work: Path, dist: Path,
 def _rdma_core_manual_deb(build_dir: Path, dist: Path, rdma_src: Path) -> None:
     """Fallback: install into a staging root and dpkg-deb it."""
     stage = build_dir / "pkg-stage"
-    run(["ninja", "install", f"DESTDIR={stage}"], cwd=build_dir)
+    if stage.exists():
+        shutil.rmtree(stage)
+    run(["ninja", "install"], cwd=build_dir, env={"DESTDIR": str(stage.resolve())})
 
     version_file = rdma_src / "CMakeLists.txt"
     version = "unknown"
@@ -504,7 +621,7 @@ def _rdma_core_manual_deb(build_dir: Path, dist: Path, rdma_src: Path) -> None:
          Userspace libibverbs provider for ionic RDMA (ionic_rdmav*.so).
     """))
     deb_name = f"rdma-core-ionic_{version}_amd64.deb"
-    run(["dpkg-deb", "--build", str(stage), str(dist / deb_name)])
+    run(["dpkg-deb", "--build", "--root-owner-group", str(stage), str(dist / deb_name)])
     print(f"  rdma-core (manual): {deb_name}")
 
 
@@ -547,10 +664,6 @@ def run_cmd(args: argparse.Namespace) -> int:
         print("[2/5] Skipping amdgpu-dkms fetch.")
 
     if not args.skip_ionic:
-        if kernel_src is None:
-            die("Ionic DKMS build requires kernel source; run without --skip-kernel or "
-                "point --work-dir at a previous build.")
-        require_cmds("dkms")
         _build_ionic_dkms(args, work, dist, kernel_src)
     else:
         print("[3/5] Skipping ionic DKMS build.")
@@ -575,7 +688,7 @@ def run_cmd(args: argparse.Namespace) -> int:
         DIR="$(cd "$(dirname "$0")" && pwd)"
         sudo dpkg -i "$DIR"/linux-image-*.deb "$DIR"/linux-headers-*.deb 2>/dev/null || true
         sudo dpkg -i "$DIR"/amdgpu-dkms_*.deb 2>/dev/null || true
-        sudo dpkg -i "$DIR"/ionic-dkms_*.deb "$DIR"/ernic_p4-dkms_*.deb 2>/dev/null || true
+        sudo dpkg -i "$DIR"/ionic-ernic-dkms_*.deb "$DIR"/ernic-p4-dkms_*.deb 2>/dev/null || true
         sudo dpkg -i "$DIR"/ernic-config_*.deb 2>/dev/null || true
         sudo dpkg -i "$DIR"/rdma-core-ionic_*.deb 2>/dev/null || true
         echo "Done. Reboot into the new kernel to activate."
