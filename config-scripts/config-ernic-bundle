@@ -1,0 +1,15 @@
+_d="$(dirname "${BASH_SOURCE[0]}")"
+source "${_d}/config-amdgpu-dkms"
+source "${_d}/config-infiniband"
+
+# VFIO — required for vfio-user / rocjitsu emulated GPU
+./scripts/config -m VFIO
+./scripts/config -m VFIO_PCI
+./scripts/config -e VFIO_IOMMU_TYPE1
+
+# Ethernet support for ionic NIC
+./scripts/config -m NET_VENDOR_PENSANDO
+./scripts/config -m IONIC
+
+# Suppress large debug-info deb that breaks KVER detection in DKMS builds
+./scripts/config -e DEBUG_INFO_NONE

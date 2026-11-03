@@ -1,0 +1,11 @@
+# Pin file for the ernic+rocjitsu+dmabuf bundle.
+# Mirrors the structure of qemu-minimal/ansible/playbooks/vars/ernic-pins.yml.
+
+# Stable kernel tag to build as the base for the ernic bundle
+kernel_tag: v7.2.15
+
+# rocm-ernic commit to use for ionic/RDMA/P4 DKMS modules
+ernic_source_pin: 61b934a3d9d8ae54fcf1691dceaa226e84aac19b
+
+# ionic kernel compatibility pin (major.minor check only in Ansible)
+ionic_kernel_pin: v7.2.6
