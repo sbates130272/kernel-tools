@@ -86,7 +86,9 @@ def register(sub: argparse._SubParsersAction) -> None:
     default_commit = pins.get("ernic_source_pin", "")
 
     p.add_argument("--kernel-tag", default=default_tag,
-                   help=f"Kernel stable tag to build (default: from ernic-pins.yml)")
+                   help="Kernel stable tag to build (default: from ernic-pins.yml)")
+    p.add_argument("--kernel-remote", default=_KERNEL_REMOTE,
+                   help="Kernel git remote URL")
     p.add_argument("--ernic-commit", default=default_commit,
                    help="rocm-ernic commit SHA (default: from ernic-pins.yml)")
     p.add_argument("--ernic-remote", default=_ERNIC_REMOTE,
@@ -123,18 +125,15 @@ def _repo_root() -> Path:
     return Path.cwd()
 
 
-def _find_patch_dirs(args: argparse.Namespace) -> tuple[Path, Path]:
+def _find_patch_dirs(args: argparse.Namespace) -> Path:
     if args.patch_dir:
         base = Path(args.patch_dir)
     else:
         base = _repo_root() / "patches"
     backport = base / "dmabuf-72x-backport"
-    iou = base / "io-uring-dmabuf"
     if not backport.is_dir():
         die(f"Patch dir not found: {backport}")
-    if not iou.is_dir():
-        die(f"Patch dir not found: {iou}")
-    return backport, iou
+    return backport
 
 
 def _apply_patch_dir(patch_dir: Path, src_dir: Path) -> None:
@@ -178,7 +177,7 @@ def _copy_debs(src_dir: Path, pattern: str, dist: Path) -> list[Path]:
 # ---------------------------------------------------------------------------
 
 def _build_kernel(args: argparse.Namespace, work: Path, dist: Path,
-                  backport_dir: Path, iou_dir: Path) -> Path:
+                  backport_dir: Path) -> Path:
     """Clone stable kernel, apply patches, build deb-pkg. Returns src dir."""
     src = work / "linux-kernel"
     if not src.exists():
@@ -188,12 +187,17 @@ def _build_kernel(args: argparse.Namespace, work: Path, dist: Path,
     else:
         print(f"[1/5] Reusing kernel clone at {src}")
 
-    # Apply patches only if .config does not yet exist (idempotency guard)
+    # Apply patches only if .config does not yet exist (idempotency guard).
+    # Reset working tree first so a previous partial run (patches applied but
+    # build errored before .config was written) doesn't cause conflicts.
     if not (src / ".config").exists():
+        run(["git", "reset", "--hard", "HEAD"], cwd=src)
+        run(["git", "clean", "-fd"], cwd=src)
+        # dmabuf-72x-backport contains all 20 patches (17 upstream + 3 backport
+        # fixups). patches/io-uring-dmabuf/ is the upstream mbox archive — not
+        # individual .patch files, so it is not applied separately.
         print("  Applying dmabuf-72x-backport patches ...")
         _apply_patch_dir(backport_dir, src)
-        print("  Applying io-uring-dmabuf patches ...")
-        _apply_patch_dir(iou_dir, src)
 
         # Configure
         script = _config_script_path("config-ernic-bundle")
@@ -516,7 +520,7 @@ def run_cmd(args: argparse.Namespace) -> int:
     work = Path(args.work_dir)
     work.mkdir(parents=True, exist_ok=True)
 
-    backport_dir, iou_dir = _find_patch_dirs(args)
+    backport_dir = _find_patch_dirs(args)
 
     # Ensure ernic repo is cloned (shared by steps 3, 4, 5)
     ernic_src = work / "rocm-ernic"
@@ -528,7 +532,7 @@ def run_cmd(args: argparse.Namespace) -> int:
     kernel_src: Path | None = None
 
     if not args.skip_kernel:
-        kernel_src = _build_kernel(args, work, dist, backport_dir, iou_dir)
+        kernel_src = _build_kernel(args, work, dist, backport_dir)
     else:
         print("[1/5] Skipping kernel build.")
         # Attempt to locate existing src dir for header use
