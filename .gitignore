@@ -23,4 +23,5 @@ ktool/build/
 
 # Clone of certain workdirs
 .build-ernic-bundle-work
+.build-ernic-bundle-dist/
 dist/ernic-bundle/
