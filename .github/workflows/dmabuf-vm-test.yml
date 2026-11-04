@@ -63,7 +63,7 @@ jobs:
             pahole rsync
 
       - name: Cache pip
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/cache/pip-ci
           key: pip-ktool-v1
@@ -73,13 +73,13 @@ jobs:
 
       - name: Cache VM backing image
         id: qcow2-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.VM_IMAGES_DIR }}
           key: qcow2-${{ env.QCOW2_TAG }}
 
       - name: Cache ccache (kernel build acceleration)
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /root/.ccache
           key: ccache-kernel-7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
@@ -88,14 +88,14 @@ jobs:
 
       - name: Cache kernel debs
         id: kernel-deb-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/cache/kernel-debs
           key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
 
       - name: Cache DKMS modules
         id: dkms-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: /var/cache/dkms-modules
           key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}
@@ -149,7 +149,7 @@ jobs:
 
       - name: Save kernel debs to cache
         if: always() && steps.kernel-deb-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: /var/cache/kernel-debs
           key: kernel-debs-v7.2.4-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'config-scripts/config-amdgpu-dkms') }}
@@ -162,7 +162,7 @@ jobs:
 
       - name: Save DKMS modules to cache
         if: always() && steps.dkms-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: /var/cache/dkms-modules
           key: dkms-amdgpu-7.1.9-${{ hashFiles('patches/dmabuf-72x-backport/*.patch', 'patches/amdgpu-72x-compat/*.patch', 'config-scripts/config-amdgpu-dkms') }}
