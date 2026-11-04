@@ -58,6 +58,7 @@ jobs:
           from ktool import (
               build_cross, build_kernel, build_amdgpu_dkms, fast_build_amdgpu,
               build_remote, init_update, dmabuf_test, bnxt, stage_amdgpu, man,
+              build_ernic_bundle,
           )
           print('all modules import OK')
           "
@@ -87,6 +88,9 @@ jobs:
 
       - name: build-amdgpu-dkms help
         run: ktool build-amdgpu-dkms --help
+
+      - name: build-ernic-bundle help
+        run: ktool build-ernic-bundle --help
 
       - name: fast-build-amdgpu help
         run: ktool fast-build-amdgpu --help
@@ -119,7 +123,8 @@ jobs:
         run: |
           MISSING=()
           for sub in build-cross build-kernel build-amdgpu-dkms fast-build-amdgpu \
-                     build-remote init-update stage-amdgpu dmabuf-test bnxt man; do
+                     build-remote init-update stage-amdgpu dmabuf-test bnxt man \
+                     build-ernic-bundle; do
             ktool "${sub}" --help > /dev/null 2>&1 || MISSING+=("${sub}")
           done
           if [ ${#MISSING[@]} -ne 0 ]; then
@@ -334,6 +339,66 @@ jobs:
 
       - name: ktool man --help exits 0
         run: ktool man --help
+
+  # ---------------------------------------------------------------------------
+  # ktool build-ernic-bundle smoke test (skip kernel + amdgpu for speed)
+  # Runs rootlessly: no sudo needed; dkms runs on the target via postinst.
+  # ---------------------------------------------------------------------------
+  ktool-build-ernic-bundle:
+    name: ktool-build-ernic-bundle (smoke)
+    runs-on: ubuntu-24.04
+    needs: ktool-install
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4.3.1
+
+      - name: Install ktool
+        run: pip install ./ktool
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build dpkg-dev \
+            libudev-dev libnl-3-dev libnl-route-3-dev \
+            pandoc python3-dev pkg-config \
+            patch
+
+      - name: Build ionic DKMS debs + ernic-config + rdma-core
+        run: |
+          ktool build-ernic-bundle \
+            --skip-kernel \
+            --skip-amdgpu \
+            --dist-dir /tmp/ernic-dist
+
+      - name: Verify expected debs were produced
+        run: |
+          MISSING=()
+          for pattern in \
+              "ionic-ernic-dkms_*.deb" \
+              "ernic-p4-dkms_*.deb" \
+              "ernic-config_*.deb" \
+              "rdma-core-ionic_*.deb"; do
+            found=$(ls /tmp/ernic-dist/${pattern} 2>/dev/null | head -1)
+            if [ -z "${found}" ]; then
+              MISSING+=("${pattern}")
+            else
+              echo "  OK: $(basename ${found})"
+            fi
+          done
+          if [ ${#MISSING[@]} -ne 0 ]; then
+            echo "ERROR: missing debs: ${MISSING[*]}"
+            ls /tmp/ernic-dist/ || true
+            exit 1
+          fi
+          echo "All 4 expected debs present."
+
+      - name: Inspect debs
+        run: |
+          for deb in /tmp/ernic-dist/*.deb; do
+            echo "--- $(basename ${deb}) ---"
+            dpkg-deb -I "${deb}"
+          done
 
   # ---------------------------------------------------------------------------
   # Python version compatibility

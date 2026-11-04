@@ -6,6 +6,7 @@ import sys
 from ktool import __version__
 from ktool import build_cross, build_kernel, build_amdgpu_dkms, fast_build_amdgpu
 from ktool import build_remote, init_update, dmabuf_test, bnxt, stage_amdgpu, man
+from ktool import build_ernic_bundle
 
 
 def main() -> int:
@@ -28,6 +29,7 @@ def main() -> int:
     bnxt.register(sub)
     stage_amdgpu.register(sub)
     man.register(sub)
+    build_ernic_bundle.register(sub)
 
     try:
         import argcomplete

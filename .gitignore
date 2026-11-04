@@ -20,3 +20,8 @@ ktool/*.egg-info/
 ktool/**/__pycache__/
 ktool/dist/
 ktool/build/
+
+# Clone of certain workdirs
+.build-ernic-bundle-work
+.build-ernic-bundle-dist/
+dist/ernic-bundle/
