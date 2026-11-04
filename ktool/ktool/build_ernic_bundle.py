@@ -580,6 +580,7 @@ def _build_rdma_core_deb(args: argparse.Namespace, work: Path, dist: Path,
          f"-DCMAKE_INSTALL_PREFIX=/usr",
          "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
          "-DNO_PYVERBS=1",
+         "-DNO_MAN_PAGES=1",
          str(rdma_src.resolve())], cwd=build_dir)
     run(["ninja", f"-j{args.threads}"], cwd=build_dir)
     cpack_ok = subprocess.run(["cpack", "-G", "DEB"], cwd=build_dir).returncode == 0
